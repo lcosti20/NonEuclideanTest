@@ -1,6 +1,3 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
-
-
-#include "ShooterWeaponHolder.h"
-
-// Add default functionality here for any IShooterWeaponHolder functions that are not pure virtual.
+version https://git-lfs.github.com/spec/v1
+oid sha256:c412a690e40eb6494261ad2100c98954e44067a052c19b5ce5bf503cf390c324
+size 187

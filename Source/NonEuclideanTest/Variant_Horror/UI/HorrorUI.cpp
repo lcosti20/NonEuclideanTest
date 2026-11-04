@@ -1,23 +1,3 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
-
-
-#include "HorrorUI.h"
-#include "HorrorCharacter.h"
-
-void UHorrorUI::SetupCharacter(AHorrorCharacter* HorrorCharacter)
-{
-	HorrorCharacter->OnSprintMeterUpdated.AddDynamic(this, &UHorrorUI::OnSprintMeterUpdated);
-	HorrorCharacter->OnSprintStateChanged.AddDynamic(this, &UHorrorUI::OnSprintStateChanged);
-}
-
-void UHorrorUI::OnSprintMeterUpdated(float Percent)
-{
-	// call the BP handler
-	BP_SprintMeterUpdated(Percent);
-}
-
-void UHorrorUI::OnSprintStateChanged(bool bSprinting)
-{
-	// call the BP handler
-	BP_SprintStateChanged(bSprinting);
-}
+version https://git-lfs.github.com/spec/v1
+oid sha256:01efc35022f5877b18fb67a2513f4987a0a1ff0063b52801eb2764c20e3ef395
+size 590

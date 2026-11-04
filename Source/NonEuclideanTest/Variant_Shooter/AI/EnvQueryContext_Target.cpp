@@ -1,27 +1,3 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
-
-
-#include "Variant_Shooter/AI/EnvQueryContext_Target.h"
-#include "EnvironmentQuery/Items/EnvQueryItemType_Actor.h"
-#include "EnvironmentQuery/EnvQueryTypes.h"
-#include "ShooterAIController.h"
-
-void UEnvQueryContext_Target::ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const
-{
-	// get the controller from the query instance
-	if (AShooterAIController* Controller = Cast<AShooterAIController>(QueryInstance.Owner))
-	{
-		// ensure the target is valid
-		if (IsValid(Controller->GetCurrentTarget()))
-		{
-			// add the controller's target actor to the context
-			UEnvQueryItemType_Actor::SetContextHelper(ContextData, Controller->GetCurrentTarget());
-
-		} else {
-
-			// if for any reason there's no target, default to the controller
-			UEnvQueryItemType_Actor::SetContextHelper(ContextData, Controller);
-		}
-	}
-
-}
+version https://git-lfs.github.com/spec/v1
+oid sha256:00a57c93cc5e44688dce0681912f7646c878ed3f324581d08b0130baabe0e508
+size 898

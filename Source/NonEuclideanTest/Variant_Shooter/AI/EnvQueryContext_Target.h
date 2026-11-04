@@ -1,22 +1,3 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
-
-#pragma once
-
-#include "CoreMinimal.h"
-#include "EnvironmentQuery/EnvQueryContext.h"
-#include "EnvQueryContext_Target.generated.h"
-
-/**
- *  Custom EnvQuery Context that returns the actor currently targeted by an NPC
- */
-UCLASS()
-class NONEUCLIDEANTEST_API UEnvQueryContext_Target : public UEnvQueryContext
-{
-	GENERATED_BODY()
-	
-public:
-
-	/** Provides the context locations or actors for this EnvQuery */
-	virtual void ProvideContext(FEnvQueryInstance& QueryInstance, FEnvQueryContextData& ContextData) const override;
-
-};
+version https://git-lfs.github.com/spec/v1
+oid sha256:e1ddd54f74962a6d6ef097cffbb5c9b624a02b6b59f7c018ca663c8d3856974d
+size 574

@@ -1,22 +1,3 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
-
-#pragma once
-
-#include "CoreMinimal.h"
-#include "Camera/PlayerCameraManager.h"
-#include "NonEuclideanTestCameraManager.generated.h"
-
-/**
- *  Basic First Person camera manager.
- *  Limits min/max look pitch.
- */
-UCLASS()
-class ANonEuclideanTestCameraManager : public APlayerCameraManager
-{
-	GENERATED_BODY()
-	
-public:
-
-	/** Constructor */
-	ANonEuclideanTestCameraManager();
-};
+version https://git-lfs.github.com/spec/v1
+oid sha256:89bf833844e081c2c7c591dcc45c8bceb61b5e127480e21d768a92d7e546d015
+size 428
