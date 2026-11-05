@@ -1,3 +1,22 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:12bdca1b40720c978323edfde7def15a1d3767e51cf8d1eb7199c96861ca315c
-size 537
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Blueprint/UserWidget.h"
+#include "ShooterUI.generated.h"
+
+/**
+ *  Simple scoreboard UI for a first person shooter game
+ */
+UCLASS(abstract)
+class NONEUCLIDEANTEST_API UShooterUI : public UUserWidget
+{
+	GENERATED_BODY()
+	
+public:
+
+	/** Allows Blueprint to update score sub-widgets */
+	UFUNCTION(BlueprintImplementableEvent, Category="Shooter", meta = (DisplayName = "Update Score"))
+	void BP_UpdateScore(uint8 TeamByte, int32 Score);
+};

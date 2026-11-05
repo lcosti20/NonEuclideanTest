@@ -1,3 +1,6 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:63ab1780f2cf68b791a573f70ce7dd2fa2b788662deaeff994efeef09c2e0ba7
-size 144
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Logging/LogMacros.h"
+
+PORTALWORLDS_API DECLARE_LOG_CATEGORY_EXTERN(LogPortalWorlds, Log, All);

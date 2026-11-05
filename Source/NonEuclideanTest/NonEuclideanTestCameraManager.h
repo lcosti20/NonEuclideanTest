@@ -1,3 +1,22 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:f643c3e4057daa643c4ef0af6d88b03d6b85f493884814aa059a1b5a94b32f6f
-size 503
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "PortalPlayerCameraManager.h"
+#include "NonEuclideanTestCameraManager.generated.h"
+
+/**
+ *  Basic First Person camera manager.
+ *  Limits min/max look pitch. Portal rendering comes from APortalPlayerCameraManager (PortalWorlds).
+ */
+UCLASS()
+class ANonEuclideanTestCameraManager : public APortalPlayerCameraManager
+{
+	GENERATED_BODY()
+
+public:
+
+	/** Constructor */
+	ANonEuclideanTestCameraManager();
+};

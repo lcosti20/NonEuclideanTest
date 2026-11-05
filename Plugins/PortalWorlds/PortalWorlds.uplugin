@@ -1,3 +1,26 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:e9c8febb9ba13e268fa7bc2d5e829f353b979f23ff1f81d6a41d7dfeb1f08099
-size 716
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Portal Worlds",
+	"Description": "Seamless, recursive portals for non-Euclidean spaces: rooms that are bigger inside, impossible loops, scale-changing tunnels. Scene-capture rendering with nested portals, walking through portals, and portal spaces.",
+	"Category": "Gameplay",
+	"CreatedBy": "",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EngineVersion": "5.8.0",
+	"CanContainContent": true,
+	"EnabledByDefault": false,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "PortalWorlds",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
+}

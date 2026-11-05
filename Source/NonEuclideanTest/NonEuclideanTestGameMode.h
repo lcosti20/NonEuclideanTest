@@ -1,3 +1,22 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:be058529ff6373f42f5bd1da644813837b9a105ccc4bce420b22871be566c381
-size 369
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/GameModeBase.h"
+#include "NonEuclideanTestGameMode.generated.h"
+
+/**
+ *  Simple GameMode for a first person game
+ */
+UCLASS(abstract)
+class ANonEuclideanTestGameMode : public AGameModeBase
+{
+	GENERATED_BODY()
+
+public:
+	ANonEuclideanTestGameMode();
+};
+
+
+

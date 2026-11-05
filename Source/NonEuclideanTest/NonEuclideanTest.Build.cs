@@ -1,3 +1,48 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:2470f1086f47fe7a4d33a46f1303ee3bf3e28a6580a45da3b0b97d77b6a5f68e
-size 1303
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+using UnrealBuildTool;
+
+public class NonEuclideanTest : ModuleRules
+{
+	public NonEuclideanTest(ReadOnlyTargetRules Target) : base(Target)
+	{
+		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
+
+		PublicDependencyModuleNames.AddRange(new string[] {
+			"Core",
+			"CoreUObject",
+			"Engine",
+			"PortalWorlds",
+			"RenderCore",
+			"RHI",
+			"InputCore",
+			"EnhancedInput",
+			"AIModule",
+			"StateTreeModule",
+			"GameplayStateTreeModule",
+			"UMG",
+			"Slate"
+		});
+
+		PrivateDependencyModuleNames.AddRange(new string[] { });
+
+		PublicIncludePaths.AddRange(new string[] {
+			"NonEuclideanTest",
+			"NonEuclideanTest/NonEuclidean",
+			"NonEuclideanTest/Variant_Horror",
+			"NonEuclideanTest/Variant_Horror/UI",
+			"NonEuclideanTest/Variant_Shooter",
+			"NonEuclideanTest/Variant_Shooter/AI",
+			"NonEuclideanTest/Variant_Shooter/UI",
+			"NonEuclideanTest/Variant_Shooter/Weapons"
+		});
+
+		// Uncomment if you are using Slate UI
+		// PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
+
+		// Uncomment if you are using online features
+		// PrivateDependencyModuleNames.Add("OnlineSubsystem");
+
+		// To include OnlineSubsystemSteam, add it to the plugins section in your uproject file with the Enabled attribute set to true
+	}
+}

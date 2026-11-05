@@ -1,3 +1,29 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:494786420f51713dca6a99413a0df11c44b5a52a79793be2404fbba5863cc0ba
-size 1386
+# Third-party notices
+
+Portal Worlds ports the portal rendering and traversal technique of NonEuclidean by CodeParade
+(https://github.com/HackerPoet/NonEuclidean), and its portal quad mesh (SM_PortalQuad) is derived from
+that project's double_quad.obj. NonEuclidean is distributed under the following licence:
+
+```
+MIT License
+
+Copyright (c) 2018 CodeParade
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
