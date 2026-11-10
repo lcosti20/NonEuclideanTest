@@ -6,6 +6,7 @@
 
 class UCameraComponent;
 class UInputAction;
+class UPortalGrabComponent;
 class UPortalTraversalComponent;
 struct FInputActionValue;
 
@@ -14,6 +15,9 @@ struct FInputActionValue;
  * (GameHeader.h / Player.cpp): no visible body, eye 1.5 m above the feet, 0.2 m radius,
  * 2.9 m/s walk, 60 degree vertical FOV, near-instant acceleration and braking, head bob,
  * no jumping.
+ *
+ * Not in the original: E picks up / drops physics objects and the left mouse button throws them
+ * (UPortalGrabComponent), for the object puzzle map.
  */
 UCLASS()
 class NONEUCLIDEANTEST_API ANEPlayerCharacter : public ACharacter
@@ -27,6 +31,7 @@ public:
 
 	UCameraComponent* GetCamera() const { return Camera; }
 	UPortalTraversalComponent* GetPortalTraversal() const { return PortalTraversal; }
+	UPortalGrabComponent* GetPortalGrab() const { return PortalGrab; }
 
 protected:
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
@@ -40,6 +45,10 @@ protected:
 	/** Teleports the player through portals when the camera crosses one. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UPortalTraversalComponent> PortalTraversal;
+
+	/** Picks up, carries and throws physics objects, also through portals. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UPortalGrabComponent> PortalGrab;
 
 	UPROPERTY(EditAnywhere, Category = "Input")
 	TObjectPtr<UInputAction> MoveAction;

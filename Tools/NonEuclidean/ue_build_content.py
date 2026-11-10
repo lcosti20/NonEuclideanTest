@@ -4,7 +4,8 @@ Run in the full editor after ue_phase0_import.py (spawning actors doesn't work i
   UnrealEditor.exe <project>.uproject -unattended -nosplash
       -ExecutePythonScript="<dir>/run_and_quit.py ue_build_content.py [stage ...]"
 
-Stages: materials, meshes, maps (default: all three); "mirror" builds only L_NE_Mirror. Portals come from the PortalWorlds plugin
+Stages: materials, meshes, maps (default: all three); "mirror" builds only L_NE_Mirror; "puzzle"
+builds only L_NE_ObjectPuzzles with its materials and meshes (run make_puzzle_meshes.py first). Portals come from the PortalWorlds plugin
 (/Script/PortalWorlds.Portal, /PortalWorlds/... assets).
 
 Coordinate conversion from the original engine (metres, Y-up, right-handed), confirmed
@@ -531,6 +532,263 @@ def build_portal_spike():
     log("map L_NE_PortalSpike saved")
 
 
+# --------------------------------------------------------------------------- object puzzles
+PUZZLE_DIR = f"{ROOT}/Puzzle"
+PUZZLE_MESH_DIR = f"{PUZZLE_DIR}/Meshes"
+PUZZLE_MAT_DIR = f"{PUZZLE_DIR}/Materials"
+KEY_CELLS = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (1, 1, 1)]  # as in make_puzzle_meshes.py
+KEY_CELL = 20.0
+CRATE_SIZE = 40.0
+TUNNEL_YAW_ALONG_LIGHT = -math.degrees(MIRROR_THETA)  # walls lit the same on both sides
+
+
+def puzzle_material(name, translucent=False):
+    """Like M_NE_Textured (texture.frag's shading) with a colour parameter instead of a texture."""
+    path = f"{PUZZLE_MAT_DIR}/{name}"
+    fresh(path)
+    mat = asset_tools.create_asset(name, PUZZLE_MAT_DIR, unreal.Material, unreal.MaterialFactoryNew())
+    mat.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_UNLIT)
+    color = mel.create_material_expression(mat, unreal.MaterialExpressionVectorParameter, -700, 0)
+    color.set_editor_property("parameter_name", "Color")
+    color.set_editor_property("default_value", unreal.LinearColor(0.8, 0.8, 0.8, 1.0))
+    nrm = mel.create_material_expression(mat, unreal.MaterialExpressionVertexNormalWS, -700, 300)
+    code = (
+        f"float s = dot(normalize(N), {LIGHT_UE}) * 0.5 + 0.5;\n"
+        "float3 c = saturate(Color * s);\n" + SRGB_DECODE
+    )
+    node = custom_node(mat, code, ["Color", "N"], -300, 0)
+    mel.connect_material_expressions(color, "", node, "Color")
+    mel.connect_material_expressions(nrm, "", node, "N")
+    mel.connect_material_property(node, "", unreal.MaterialProperty.MP_EMISSIVE_COLOR)
+    if translucent:
+        mat.set_editor_property("blend_mode", unreal.BlendMode.BLEND_TRANSLUCENT)
+        mat.set_editor_property("two_sided", True)
+        opacity = mel.create_material_expression(mat, unreal.MaterialExpressionScalarParameter, -300, 300)
+        opacity.set_editor_property("parameter_name", "Opacity")
+        opacity.set_editor_property("default_value", 0.3)
+        mel.connect_material_property(opacity, "", unreal.MaterialProperty.MP_OPACITY)
+    mel.recompile_material(mat)
+    eal.save_loaded_asset(mat)
+    log(f"material {path}")
+    return mat
+
+
+def puzzle_instance(name, parent, rgb):
+    path = f"{PUZZLE_MAT_DIR}/{name}"
+    fresh(path)
+    mi = asset_tools.create_asset(name, PUZZLE_MAT_DIR, unreal.MaterialInstanceConstant,
+                                  unreal.MaterialInstanceConstantFactoryNew())
+    mel.set_material_instance_parent(mi, parent)
+    mel.set_material_instance_vector_parameter_value(mi, "Color", unreal.LinearColor(rgb[0], rgb[1], rgb[2], 1.0))
+    eal.save_loaded_asset(mi)
+    return mi
+
+
+def build_puzzle_materials():
+    color = puzzle_material("M_PW_Color")
+    ghost = puzzle_material("M_PW_Ghost", translucent=True)
+    puzzle_instance("MI_PW_KeyHead", color, (0.9, 0.18, 0.12))
+    puzzle_instance("MI_PW_Crate", color, (0.95, 0.55, 0.15))
+    puzzle_instance("MI_PW_Gate", color, (0.55, 0.35, 0.8))
+    puzzle_instance("MI_PW_Ghost", ghost, (0.35, 0.9, 1.0))
+
+
+def import_puzzle_mesh(name):
+    """Imports SourceArt/.../Generated/Puzzle/<name>.glb as PUZZLE_MESH_DIR/<name>."""
+    project = unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_dir())
+    task = unreal.AssetImportTask()
+    task.filename = f"{project}SourceArt/NonEuclidean/Generated/Puzzle/{name}.glb"
+    task.destination_path = f"{PUZZLE_MESH_DIR}/Import_{name}"
+    task.automated = True
+    task.replace_existing = True
+    task.save = True
+    asset_tools.import_asset_tasks([task])
+    mesh = None
+    for path in task.imported_object_paths:
+        asset = eal.load_asset(path)
+        if isinstance(asset, unreal.StaticMesh):
+            mesh = asset
+    if not mesh:
+        raise RuntimeError(f"importing {task.filename} made no static mesh: {list(task.imported_object_paths)}")
+    flat = f"{PUZZLE_MESH_DIR}/{name}"
+    if eal.does_asset_exist(flat):
+        eal.delete_asset(flat)
+    eal.rename_asset(mesh.get_path_name().split(".")[0], flat)
+    mesh = eal.load_asset(flat)
+    return mesh
+
+
+def configure_puzzle_mesh(mesh, slot_materials, boxes):
+    """Materials by slot name, no Nanite, and simple box collision (boxes work mirrored)."""
+    slots = mesh.get_editor_property("static_materials")
+    for i, slot in enumerate(slots):
+        slot_name = str(slot.get_editor_property("material_slot_name"))
+        material = next((m for key, m in slot_materials.items() if key.lower() in slot_name.lower()), None)
+        if material is None:
+            raise RuntimeError(f"{mesh.get_name()}: no material for slot {slot_name}")
+        mesh.set_material(i, material)
+    nanite = mesh.get_editor_property("nanite_settings")
+    nanite.set_editor_property("enabled", False)
+    mesh.set_editor_property("nanite_settings", nanite)
+
+    unreal.EditorStaticMeshLibrary.remove_collisions(mesh)
+    body = mesh.get_editor_property("body_setup")
+    agg = body.get_editor_property("agg_geom")
+    elems = []
+    for centre, size in boxes:
+        box = unreal.KBoxElem()
+        box.set_editor_property("center", unreal.Vector(*centre))
+        box.set_editor_property("x", size)
+        box.set_editor_property("y", size)
+        box.set_editor_property("z", size)
+        elems.append(box)
+    agg.set_editor_property("box_elems", elems)
+    body.set_editor_property("agg_geom", agg)
+    body.set_editor_property("collision_trace_flag", unreal.CollisionTraceFlag.CTF_USE_DEFAULT)
+    eal.save_loaded_asset(mesh)
+    b = mesh.get_bounding_box()
+    log(f"puzzle mesh {mesh.get_name()}: bounds {b.min} .. {b.max}, {len(elems)} boxes")
+
+
+def build_puzzle_meshes():
+    def mat(path):
+        return eal.load_asset(path)
+
+    key = import_puzzle_mesh("SM_PW_Key")
+    n = len(KEY_CELLS)
+    centroid = [sum(c[i] for c in KEY_CELLS) / n for i in range(3)]
+    key_boxes = [([(c[i] - centroid[i]) * KEY_CELL for i in range(3)], KEY_CELL) for c in KEY_CELLS]
+    configure_puzzle_mesh(key, {"Head": mat(f"{PUZZLE_MAT_DIR}/MI_PW_KeyHead"), "Body": mat(f"{MAT_DIR}/MI_NE_Gold")}, key_boxes)
+
+    crate = import_puzzle_mesh("SM_PW_Crate")
+    configure_puzzle_mesh(crate, {"Crate": mat(f"{PUZZLE_MAT_DIR}/MI_PW_Crate")}, [((0, 0, 0), CRATE_SIZE)])
+    for name in ("SM_PW_Key", "SM_PW_Crate"):
+        if eal.does_directory_exist(f"{PUZZLE_MESH_DIR}/Import_{name}"):
+            eal.delete_directory(f"{PUZZLE_MESH_DIR}/Import_{name}")  # interchange's own materials
+
+
+def spawn_mesh_ue(mesh_path, label, loc, yaw=0.0, scale=(1, 1, 1), material=None, folder="Geometry"):
+    """A static mesh actor placed in Unreal coordinates (cm)."""
+    actor = actor_sub.spawn_actor_from_object(eal.load_asset(mesh_path), unreal.Vector(*loc), unreal.Rotator(0, 0, yaw))
+    actor.set_actor_label(label)
+    actor.set_actor_scale3d(unreal.Vector(*scale))
+    actor.set_folder_path(folder)
+    comp = actor.static_mesh_component
+    comp.set_editor_property("cast_shadow", False)
+    if material:
+        comp.set_material(0, eal.load_asset(material))
+    return actor
+
+
+def spawn_tunnel_with_portal(label, centre, yaw, size, half_length, portal_width_sign=1.0):
+    """A SM_Tunnel (1.2 m x 2 m inside, times size) centred on centre, running along the yaw's
+    local Y for +/-half_length cm, with a portal across its middle."""
+    spawn_mesh_ue(f"{MESH_DIR}/SM_Tunnel", f"Tunnel_{label}", (centre[0], centre[1], 0), yaw,
+                  (size, half_length / 100.0, size))
+    loc = unreal.Vector(centre[0], centre[1], 100.0 * size)
+    return spawn_portal(f"Portal_{label}", loc, yaw, unreal.Vector(0.6 * size * portal_width_sign, size, 0.999 * size))
+
+
+def facing_yaw(src, dst):
+    """Yaw that points an actor's +X from src towards dst."""
+    return math.degrees(math.atan2(dst[1] - src[1], dst[0] - src[0]))
+
+
+def build_puzzle_map():
+    """L_NE_ObjectPuzzles: carrying and throwing objects through a mirror tunnel and a shrinking
+    tunnel to fill four sockets. See the docstring of ANEPuzzleGameMode and the README."""
+    les = new_map("L_NE_ObjectPuzzles")
+    world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
+    world.get_world_settings().set_editor_property(
+        "default_game_mode", unreal.load_class(None, "/Script/NonEuclideanTest.NEPuzzleGameMode"))
+
+    spawn_mesh("SM_Ground", "Ground", (0, 0, 0), 0.0, (20, 1.2, 20))  # 40 m x 40 m
+    spawn_sky()
+    start = (0.0, 1600.0)
+    ps = actor_sub.spawn_actor_from_class(unreal.PlayerStart, unreal.Vector(start[0], start[1], 92), unreal.Rotator(0, 0, -90))
+    ps.set_folder_path("Environment")
+
+    # Mirror station (west): walk into tunnel A and come out of tunnel B mirrored. Both tunnels run
+    # along the light's direction, so the walls are lit the same on both sides and the seam doesn't show.
+    yaw = TUNNEL_YAW_ALONG_LIGHT
+    axis = (math.sin(MIRROR_THETA), math.cos(MIRROR_THETA))  # the tunnels' local Y in the world: (0.6, 0.8)
+    # B runs parallel to A, 7 m to the side: in line with A, the view through A would show A again.
+    side = (axis[1], -axis[0])
+    mirror_a = (-900.0, 300.0)
+    mirror_b = (mirror_a[0] - side[0] * 700.0, mirror_a[1] - side[1] * 700.0)
+    pa = spawn_tunnel_with_portal("MirrorA", mirror_a, yaw, 1.0, 200.0)
+    pb = spawn_tunnel_with_portal("MirrorB", mirror_b, yaw, 1.0, 200.0, portal_width_sign=-1.0)
+    connect(pa, pb)
+
+    # Shrink station (east): tunnel "Big" leads into the half-size tunnel "Small" (x0.5), and back (x2).
+    pbig = spawn_tunnel_with_portal("ShrinkBig", (900.0, 300.0), 0.0, 1.0, 200.0)
+    psmall = spawn_tunnel_with_portal("ShrinkSmall", (1400.0, -700.0), 0.0, 0.5, 100.0)
+    connect(pbig, psmall)
+
+    # Objects.
+    obj_class = unreal.load_class(None, "/Script/NonEuclideanTest.NEPuzzleObject")
+    key_mesh = eal.load_asset(f"{PUZZLE_MESH_DIR}/SM_PW_Key")
+    crate_mesh = eal.load_asset(f"{PUZZLE_MESH_DIR}/SM_PW_Crate")
+    objects = (("Mirror key", "Key", key_mesh, (-250.0, 1150.0, 30.0), 20.0),
+               ("Spare key", "Key", key_mesh, (250.0, 1150.0, 30.0), -20.0),
+               ("Crate A", "Crate", crate_mesh, (650.0, 1050.0, 25.0), 10.0),
+               ("Crate B", "Crate", crate_mesh, (1150.0, 1050.0, 25.0), -15.0))
+    for label, kind, mesh, loc, obj_yaw in objects:
+        obj = actor_sub.spawn_actor_from_class(obj_class, unreal.Vector(*loc), unreal.Rotator(0, 0, obj_yaw))
+        obj.set_actor_label(label.replace(" ", ""))
+        obj.set_folder_path("Objects")
+        obj.set_editor_property("label", label)
+        obj.set_editor_property("kind", kind)
+        obj.set_editor_property("object_mesh", mesh)
+
+    # Sockets: (label, kind, size, mirrored, mesh, position).
+    socket_class = unreal.load_class(None, "/Script/NonEuclideanTest.NEPuzzleSocket")
+    sockets = []
+    for label, kind, size, mirrored, mesh, loc in (
+            ("Mirror socket", "Key", 1.0, True, key_mesh, (-350.0, 800.0)),
+            ("Small mirror socket", "Key", 0.5, True, key_mesh, (250.0, -650.0)),
+            ("Small socket", "Crate", 0.5, False, crate_mesh, (1400.0, -1150.0)),
+            ("Big socket", "Crate", 2.0, False, crate_mesh, (900.0, 850.0))):
+        sock = actor_sub.spawn_actor_from_class(socket_class, unreal.Vector(loc[0], loc[1], 0),
+                                                unreal.Rotator(0, 0, facing_yaw(loc, start)))
+        sock.set_actor_label(label.title().replace(" ", ""))
+        sock.set_folder_path("Sockets")
+        for prop, value in (("label", label), ("required_kind", kind), ("required_size", size),
+                            ("require_mirrored", mirrored), ("ghost_mesh", mesh),
+                            ("ghost_material", eal.load_asset(f"{PUZZLE_MAT_DIR}/MI_PW_Ghost")),
+                            ("pedestal_material", eal.load_asset(f"{MAT_DIR}/MI_NE_White")),
+                            ("lamp_material", eal.load_asset(f"{PUZZLE_MAT_DIR}/M_PW_Color"))):
+            sock.set_editor_property(prop, value)
+        sockets.append(sock)
+
+    # The reward: a pen with Suzanne in it, closed by a gate that opens when every socket is solved.
+    white = f"{MAT_DIR}/MI_NE_White"
+    cube = "/Engine/BasicShapes/Cube"
+    pen_y, pen_depth, pen_width, height = -1100.0, 300.0, 340.0, 250.0
+    for label, loc, scale in (
+            ("PenWallLeft", (-pen_width / 2, pen_y - pen_depth / 2, height / 2), (0.2, pen_depth / 100, height / 100)),
+            ("PenWallRight", (pen_width / 2, pen_y - pen_depth / 2, height / 2), (0.2, pen_depth / 100, height / 100)),
+            ("PenWallBack", (0.0, pen_y - pen_depth, height / 2), ((pen_width + 20) / 100, 0.2, height / 100))):
+        spawn_mesh_ue(cube, label, loc, 0.0, scale, white, folder="Pen")
+    spawn_mesh("SM_Suzanne", "Trophy", (0.0, 0.9, (pen_y - pen_depth / 2) / 100.0), math.pi, (1.2, 1.2, 1.2), folder="Pen")
+    gate = actor_sub.spawn_actor_from_class(unreal.load_class(None, "/Script/NonEuclideanTest.NEPuzzleGate"),
+                                            unreal.Vector(0.0, pen_y, height / 2), unreal.Rotator(0, 0, 0))
+    gate.set_actor_label("Gate")
+    gate.set_folder_path("Pen")
+    gate.set_actor_scale3d(unreal.Vector((pen_width - 20) / 100, 0.2, height / 100))
+    gate.get_component_by_class(unreal.StaticMeshComponent).set_material(0, eal.load_asset(f"{PUZZLE_MAT_DIR}/MI_PW_Gate"))
+    gate.set_editor_property("sockets", sockets)
+
+    les.save_current_level()
+    log("map L_NE_ObjectPuzzles saved")
+
+
+def build_puzzle():
+    build_puzzle_materials()
+    build_puzzle_meshes()
+    build_puzzle_map()
+
+
 # --------------------------------------------------------------------------- main
 def main():
     global actor_sub
@@ -558,6 +816,8 @@ def main():
         build_level5()
     if "maps" in stages or "mirror" in stages:
         build_mirror()
+    if "maps" in stages or "puzzle" in stages:
+        build_puzzle()
 
 
 main()

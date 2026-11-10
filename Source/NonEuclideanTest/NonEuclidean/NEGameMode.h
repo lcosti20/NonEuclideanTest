@@ -40,10 +40,10 @@ class NONEUCLIDEANTEST_API ANEGameMode : public AGameModeBase
 public:
 	ANEGameMode();
 
-	/** Demo maps in the original's order (its keys 1-6; its 7 was the out-of-scope VR level), then the mirror tunnel (7, new). */
+	/** Demo maps in the original's order (its keys 1-6; its 7 was the out-of-scope VR level), then the mirror tunnel (7, new) and the object puzzles (8, new). */
 	static const TArray<FString>& GetDemoMaps();
 
-	/** Opens demo Index (0-based). Bound to keys 1-7 and the console command "NE.Demo <1-7>". */
+	/** Opens demo Index (0-based). Bound to keys 1-8 and the console command "NE.Demo <1-8>". */
 	static void OpenDemo(UObject* WorldContext, int32 Index);
 
 	virtual void BeginPlay() override;

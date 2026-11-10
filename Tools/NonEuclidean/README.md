@@ -139,7 +139,7 @@ For real-input walks of a fixed duration, add `-benchmark -fps=60` (fixed 1/60 s
 
 ## Showcase and profiling (Phase 7)
 
-Keys 1–7 (or `NE.Demo <n>`) switch demos; standalone play starts at `L_NE_Tunnels`. `-NEProfile` logs
+Keys 1–8 (or `NE.Demo <n>`) switch demos; standalone play starts at `L_NE_Tunnels`. `-NEProfile` logs
 frame / game / render / GPU times and captures (mean, p95, max) over a motion, plus every frame over
 16.7 ms. Profile at 1080p with `RESX=1920 RESY=1080 Tools/NonEuclidean/shot.sh <map> <name> -NEProfile
 "-ExecCmds=r.VSync 0, t.MaxFPS 0" <motion options from the checks above>`. Results and the comparison
@@ -207,3 +207,65 @@ brown border. In a world with mirroring portals the pass now runs from the first
 until needed). In editor builds the subsystem also waits for the material's shaders at begin play.
 A Windows cook (564 packages, 0 errors) compiles `M_PortalMirrorView`'s game shaders, so it's
 packaged through the subsystem's constructor reference.
+
+## Object puzzle checks (`L_NE_ObjectPuzzles`)
+
+Carrying and throwing objects through a shrinking tunnel and a mirror tunnel. Plugin side: object traversal in
+`UPortalTraversalComponent` and carrying in `UPortalGrabComponent`. Game side: `ANEPuzzleObject`,
+`ANEPuzzleSocket`, `ANEPuzzleGate`, `ANEPuzzleHUD` and `ANEPuzzleGameMode`. Build the meshes, then the
+materials, meshes and map (stage `puzzle`, also part of `maps`):
+
+```sh
+python -I Tools/NonEuclidean/make_puzzle_meshes.py SourceArt/NonEuclidean/Generated/Puzzle
+"$UE/UnrealEditor.exe" "$P/NonEuclideanTest.uproject" -unattended -nosplash -ExecutePythonScript="$P/Tools/NonEuclidean/run_and_quit.py ue_build_content.py puzzle"
+```
+
+The key (`SM_PW_Key`) is a chiral tetracube: none of the 24 rotations maps it onto its mirror image. Its collision is
+one box per cube on a single body, which Chaos rescales and mirrors correctly.
+
+`-NEPuzzleTest` plays the map through by script and quits. It logs `[NE] PuzzleTest PASS/FAIL` per check:
+
+```sh
+MSYS_NO_PATHCONV=1 "$UE/UnrealEditor.exe" "$P/NonEuclideanTest.uproject" /Game/NonEuclidean/Maps/L_NE_ObjectPuzzles -game -windowed -ResX=1280 -ResY=720 -NEPuzzleTest
+```
+
+| Check | Result |
+| --- | --- |
+| Spare key thrown through the mirror, then through the shrink tunnel | mirrored, then mirrored at x0.5; the small mirror socket takes it |
+| Crate B thrown into the half-size tunnel | x2.0; the big socket takes it |
+| Crate A carried through the shrink tunnel | player and crate both x0.5, still held, relative size 1.0; the crate crosses ~0.3 s before the player |
+| Turn round in the small tunnel and carry it back | player and crate both x1.0, still held |
+| Crate A thrown through the shrink tunnel | x0.5; the small socket takes it |
+| Unmirrored key on the mirror socket | refused: "wrong way round (not mirrored)" |
+| Mirror key carried through the mirror | player and key both mirrored, still held; the mirror socket takes it after it's dropped |
+| All four sockets | the gate opens |
+
+All 15 checks pass. `-NEPlace=<label>:X,Y,Z,Yaw,Size;...` freezes objects in place for screenshots (a negative
+size mirrors). For example, a crate halfway through the shrink portal, seen from inside the tunnel:
+
+```sh
+Tools/NonEuclidean/shot.sh L_NE_ObjectPuzzles crossing "-NEPlace=Crate A:900,300,100,20,1" -NEPose=900,150,150,90,-25
+```
+
+The crate shows its full depth: the half that's through is drawn by the crossing copy at the half-size portal and
+seen through the portal. `-NEPlace=Mirror key:-40,1300,25,0,-1;Spare key:40,1300,25,0,1 -NEPose=0,1420,100,-90,-35`
+shows the two keys as exact mirror images, with no inside-out faces at the negative scale.
+
+Re-checked after the plugin changes (unchanged from before): the scale laps (`L_NE_Scale`, 1 → 0.5 → 0.25) and the
+mirror there-and-back (`L_NE_Mirror`: mirrored, not mirrored, mirrored).
+
+Found and fixed along the way:
+- **Objects carried or thrown through the mirror rendered inside out.** A mesh picks its cull mode from the sign of its
+  scale when its render state is created, and doesn't update it when only the transform changes. A mirroring
+  traversal (and the crossing copy, and `ANEPuzzleObject::PlaceAt`) now rebuilds the render state when the sign flips.
+  `-NEPlaceLater=<same format as -NEPlace>` re-places objects 1 s in, after they've been drawn, which reproduces it:
+  `-NEPlace=Mirror key:-40,1300,25,0,1;Spare key:40,1300,25,0,1 "-NEPlaceLater=Mirror key:-40,1300,25,0,-1" -NEPose=0,1420,100,-90,-35`
+  showed the mirrored key inside out before the fix and the right way out after it. (Mirroring it before the first
+  frame, as `-NEPlace` does, never showed the problem.)
+- **Held objects were flung back through portals.** The physics handle moves its kinematic anchor to each new target
+  over a physics step, so a target that jumped metres through a portal dragged the object along at that speed. The
+  grab component now re-grabs the object in place after it goes through.
+- **Carried objects trailed behind.** With the handle's default spring (750/200), a carried object lagged ~0.8 m at
+  walking speed and reached the portal with the player. It's now 4000/200.
+- **Objects were dropped on pickup or on a quick turn.** The drop rule now allows for the pull-in after picking up, and
+  only drops an object that stays out of reach for 0.5 s.

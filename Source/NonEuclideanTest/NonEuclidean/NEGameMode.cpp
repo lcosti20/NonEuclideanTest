@@ -32,6 +32,7 @@ const TArray<FString>& ANEGameMode::GetDemoMaps()
 		TEXT("/Game/NonEuclidean/Maps/L_NE_Slope"),   // 5: down the tunnel to the top of the hill
 		TEXT("/Game/NonEuclidean/Maps/L_NE_Scale"),   // 6: shrinking tunnel
 		TEXT("/Game/NonEuclidean/Maps/L_NE_Mirror"),  // 7: mirror tunnel (not in the original)
+		TEXT("/Game/NonEuclidean/Maps/L_NE_ObjectPuzzles"), // 8: carrying objects through shrinking and mirroring portals (new)
 	};
 	return Maps;
 }
@@ -48,7 +49,7 @@ void ANEGameMode::OpenDemo(UObject* WorldContext, int32 Index)
 namespace
 {
 	FAutoConsoleCommandWithWorldAndArgs GDemoCommand(
-		TEXT("NE.Demo"), TEXT("Open non-Euclidean demo 1-7 (same as keys 1-7)."),
+		TEXT("NE.Demo"), TEXT("Open non-Euclidean demo 1-8 (same as keys 1-8)."),
 		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
 		{
 			if (Args.Num() == 1 && World)

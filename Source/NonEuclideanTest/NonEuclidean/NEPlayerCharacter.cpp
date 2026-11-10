@@ -8,6 +8,7 @@
 #include "InputActionValue.h"
 #include "NEGameMode.h"
 #include "NEVideoLook.h"
+#include "PortalGrabComponent.h"
 #include "PortalTraversalComponent.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -53,6 +54,8 @@ ANEPlayerCharacter::ANEPlayerCharacter()
 	PortalTraversal = CreateDefaultSubobject<UPortalTraversalComponent>(TEXT("PortalTraversal"));
 	PortalTraversal->Eye = Camera;
 
+	PortalGrab = CreateDefaultSubobject<UPortalGrabComponent>(TEXT("PortalGrab"));
+
 	UCharacterMovementComponent* Move = GetCharacterMovement();
 	Move->MaxWalkSpeed = WalkSpeed;
 	Move->MaxAcceleration = WalkAccel;
@@ -81,8 +84,8 @@ void ANEPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputC
 		Input->BindAction(MouseLookAction, ETriggerEvent::Triggered, this, &ANEPlayerCharacter::LookInput);
 	}
 
-	// Keys 1-7 switch demos, like the original's level keys (7, the mirror tunnel, is new).
-	static const FKey DemoKeys[] = {EKeys::One, EKeys::Two, EKeys::Three, EKeys::Four, EKeys::Five, EKeys::Six, EKeys::Seven};
+	// Keys 1-8 switch demos, like the original's level keys (7, the mirror tunnel, and 8, the object puzzles, are new).
+	static const FKey DemoKeys[] = {EKeys::One, EKeys::Two, EKeys::Three, EKeys::Four, EKeys::Five, EKeys::Six, EKeys::Seven, EKeys::Eight};
 	for (int32 Index = 0; Index < UE_ARRAY_COUNT(DemoKeys); ++Index)
 	{
 		FInputKeyBinding Binding(FInputChord(DemoKeys[Index]), IE_Pressed);
@@ -92,6 +95,14 @@ void ANEPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputC
 		});
 		PlayerInputComponent->KeyBindings.Add(Binding);
 	}
+
+	// Objects: E picks up / drops, left click throws.
+	FInputKeyBinding GrabBinding(FInputChord(EKeys::E), IE_Pressed);
+	GrabBinding.KeyDelegate.GetDelegateForManualSet().BindWeakLambda(this, [this]() { PortalGrab->ToggleGrab(); });
+	PlayerInputComponent->KeyBindings.Add(GrabBinding);
+	FInputKeyBinding ThrowBinding(FInputChord(EKeys::LeftMouseButton), IE_Pressed);
+	ThrowBinding.KeyDelegate.GetDelegateForManualSet().BindWeakLambda(this, [this]() { PortalGrab->Throw(); });
+	PlayerInputComponent->KeyBindings.Add(ThrowBinding);
 }
 
 void ANEPlayerCharacter::MoveInput(const FInputActionValue& Value)

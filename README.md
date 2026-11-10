@@ -22,8 +22,34 @@ Open `NonEuclideanTest.uproject` and press Play, or run it standalone. Walk with
 | 5 | `L_NE_Slope` | Go down a tunnel and come out on top of the hill |
 | 6 | `L_NE_Scale` | A tunnel that shrinks you, and one that grows you back |
 | 7 | `L_NE_Mirror` | Not in the video: a tunnel that mirrors the world. Go through and every landmark is on the other side; go round and through again and it's back |
+| 8 | `L_NE_ObjectPuzzles` | Not in the video: puzzles about carrying objects through portals. A shrinking tunnel changes their size and a mirror tunnel flips their handedness; fill four sockets to open the gate |
+
+In `L_NE_ObjectPuzzles`, **E** picks up or drops an object and the **left mouse button** throws it. The HUD lists what each socket needs. See [The object puzzle map](#the-object-puzzle-map).
 
 The console command `NE.Demo <n>` does the same as the keys.
+
+## The object puzzle map
+
+`L_NE_ObjectPuzzles` tests the mechanic of bringing objects through portals to change their size and handedness (chirality). It has two portal stations and four objects:
+
+- **Mirror tunnel** (west): walk into tunnel A and come out of tunnel B, 7 m away, mirrored.
+- **Shrink tunnel** (east): walk into the full-size tunnel and come out of the half-size one at half size. Go back the other way to double in size.
+- **Objects:** two keys and two crates. Each key is four cubes in a twist, with a red cube at one end. It's chiral: its mirror image can't be turned to match it.
+
+Each socket shows a translucent ghost of exactly what it wants. A matching object dropped on it locks in and turns the lamp green. A wrong one turns it red, and the HUD says why ("wrong size", "wrong way round").
+
+| Socket | Wants | One solution |
+| --- | --- | --- |
+| Mirror socket | a mirrored key at full size | Carry the key through the mirror tunnel, walk back, drop it on the socket |
+| Small mirror socket | a mirrored key at half size | Send the spare key through both tunnels, in either order |
+| Small socket | a crate at half size | Throw or carry a crate through the shrink tunnel |
+| Big socket | a crate at double size | Throw a crate into the half-size tunnel's mouth (it's too low for you to walk into), or shrink yourself first and carry it back |
+
+All four open the gate to the trophy.
+
+Carrying matters: an object you carry through a portal changes together with you. A key carried through the mirror is mirrored in the world, and so are you, so it still looks the same to you. Throw it through, or carry it and walk back round, and you see it flipped. The same goes for size.
+
+`-NEPuzzleTest` plays through all of this by script and logs a PASS/FAIL line per check (see the [tools README](Tools/NonEuclidean/README.md#object-puzzle-checks-l_ne_objectpuzzles)).
 
 ## What's where
 
