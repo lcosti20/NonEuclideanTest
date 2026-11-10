@@ -39,6 +39,16 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnPortalTraversedSignature, APor
  * flipped left-right on screen (UPortalSubsystem adds a post-process flip), mouse yaw is reversed
  * (APortalPlayerCameraManager) and movement input is reflected left-right (bMirrorMovementInput),
  * so the controls feel unchanged.
+ *
+ * Objects (any owner that isn't a pawn, e.g. a physics prop): the tracked point is the root
+ * component's origin, so give props a centred pivot. On a crossing the whole actor transform is
+ * warped, so a scaling portal resizes the object and a mirroring portal gives it a negative scale:
+ * its shape really is mirrored in the world (IsMirrored). A simulating root keeps its motion: linear
+ * and angular velocity are warped, and its mass is recomputed after a size change. If the object is
+ * tagged with a space, it moves to the exit portal's space. While the object is partway through a
+ * portal, a copy of its static meshes is shown at the other side (bShowCopyWhileCrossing), so it
+ * doesn't vanish into the portal surface. Simple collision made of boxes, spheres or convex hulls
+ * on a single body works mirrored; welded multi-component bodies don't rescale correctly.
  */
 UCLASS(ClassGroup = (Portals), meta = (BlueprintSpawnableComponent))
 class PORTALWORLDS_API UPortalTraversalComponent : public UActorComponent
@@ -66,6 +76,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Portal")
 	bool bMirrorMovementInput = true;
 
+	/**
+	 * Objects only (owners that aren't pawns): while the owner is partway through a portal, show a
+	 * copy of its static meshes at the linked portal, so the part that's already through is visible.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Portal")
+	bool bShowCopyWhileCrossing = true;
+
 	/** True while the owner is mirrored relative to the world (after an odd number of mirroring portals). */
 	UFUNCTION(BlueprintPure, Category = "Portal")
 	bool IsMirrored() const { return bMirrored; }
@@ -73,6 +90,15 @@ public:
 	/** Sets the mirrored state directly, e.g. on respawn. */
 	UFUNCTION(BlueprintCallable, Category = "Portal")
 	void SetMirrored(bool bNewMirrored) { bMirrored = bNewMirrored; }
+
+	/**
+	 * Rebuilds the render state of Actor's primitives. Call after giving an actor a scale of the
+	 * opposite sign (mirroring or unmirroring it): a mesh decides which faces to cull when its render
+	 * state is created, and keeps that choice when only its transform changes, so it would render
+	 * inside out. Traversal does this itself.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Portal")
+	static void RefreshMirroredRendering(AActor* Actor);
 
 	/** The traversal component of a player's view target (or pawn), if it has one. */
 	static UPortalTraversalComponent* FindForPlayer(const APlayerController* PC);
@@ -106,12 +132,22 @@ private:
 	friend struct FPortalInputMirrorTickFunction;
 
 	void Traverse(APortal* From, APortal* To, const FVector& Bump);
+	void TraverseObject(APortal* From, APortal* To, const FMatrix& Warp, const FVector& Bump);
+	void UpdateCrossingCopy();
+	AActor* GetOrCreateCrossingCopy();
 	void MirrorPendingInput();
 	void UpdateInputTickPrerequisites();
 
 	FPortalInputMirrorTickFunction InputMirrorTick;
 	TWeakObjectPtr<AController> InputTickController;
 	bool bMirrored = false;
+
+	/** Objects: copy of the owner's static meshes shown at the far side while it's partway through a portal. */
+	UPROPERTY(Transient)
+	TObjectPtr<AActor> CrossingCopy;
+
+	/** Whether the copy was mirrored when its render state was last built. */
+	bool bCrossingCopyMirrored = false;
 
 	FVector PreviousEye = FVector::ZeroVector;
 	bool bHasPreviousEye = false;

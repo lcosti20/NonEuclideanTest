@@ -2,6 +2,8 @@
 
 #include "Camera/CameraComponent.h"
 #include "Camera/PlayerCameraManager.h"
+#include "Components/PrimitiveComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
@@ -54,6 +56,11 @@ void UPortalTraversalComponent::BeginPlay()
 
 void UPortalTraversalComponent::EndPlay(const EEndPlayReason::Type Reason)
 {
+	if (CrossingCopy)
+	{
+		CrossingCopy->Destroy();
+		CrossingCopy = nullptr;
+	}
 	if (InputMirrorTick.IsTickFunctionRegistered())
 	{
 		InputMirrorTick.UnRegisterTickFunction();
@@ -106,6 +113,20 @@ void UPortalTraversalComponent::MirrorPendingInput()
 	const FVector Right = FRotationMatrix(Yaw).GetUnitAxis(EAxis::Y);
 	Pawn->Internal_ConsumeMovementInputVector();
 	Pawn->Internal_AddMovementInput(Input - Right * (2.0 * FVector::DotProduct(Input, Right)), /*bForce*/ true);
+}
+
+void UPortalTraversalComponent::RefreshMirroredRendering(AActor* Actor)
+{
+	if (!Actor)
+	{
+		return;
+	}
+	TArray<UPrimitiveComponent*> Primitives;
+	Actor->GetComponents(Primitives);
+	for (UPrimitiveComponent* Primitive : Primitives)
+	{
+		Primitive->MarkRenderStateDirty(); // recreated before this frame renders
+	}
 }
 
 UPortalTraversalComponent* UPortalTraversalComponent::FindForPlayer(const APlayerController* PC)
@@ -161,6 +182,8 @@ void UPortalTraversalComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	}
 	PreviousEye = Eye->GetComponentLocation();
 	bHasPreviousEye = true;
+
+	UpdateCrossingCopy();
 }
 
 void UPortalTraversalComponent::ApplyScaleFactor(double Factor)
@@ -186,6 +209,11 @@ void UPortalTraversalComponent::Traverse(APortal* From, APortal* To, const FVect
 {
 	AActor* Owner = GetOwner();
 	const FMatrix Warp = From->GetWarpTo(To);
+	if (!Cast<APawn>(Owner))
+	{
+		TraverseObject(From, To, Warp, Bump);
+		return;
+	}
 	const double ScaleFactor = Warp.TransformVector(FVector::XAxisVector).Size();
 	const bool bMirrorWarp = Warp.Determinant() < 0.0;
 
@@ -243,4 +271,173 @@ void UPortalTraversalComponent::Traverse(APortal* From, APortal* To, const FVect
 		bMirrorWarp ? (bMirrored ? TEXT(", now mirrored") : TEXT(", no longer mirrored")) : TEXT(""),
 		*Eye->GetComponentLocation().ToString());
 	OnPortalTraversed.Broadcast(From, To, static_cast<float>(ScaleFactor));
+}
+
+void UPortalTraversalComponent::TraverseObject(APortal* From, APortal* To, const FMatrix& Warp, const FVector& Bump)
+{
+	AActor* Owner = GetOwner();
+	const double ScaleFactor = Warp.TransformVector(FVector::XAxisVector).Size();
+	const bool bMirrorWarp = Warp.Determinant() < 0.0;
+
+	// The whole transform goes through the warp. FTransform keeps a mirroring (negative
+	// determinant) as a negative X scale, so a mirrored object's shape really is mirrored.
+	const FTransform Old = Owner->GetActorTransform();
+	FTransform New(Old.ToMatrixWithScale() * Warp);
+	New.SetLocation(Warp.TransformPosition(Old.GetLocation() - Bump * 2.0));
+
+	UPrimitiveComponent* Body = Cast<UPrimitiveComponent>(Owner->GetRootComponent());
+	const bool bSimulating = Body && Body->IsSimulatingPhysics();
+	const FVector LinearVelocity = bSimulating ? Body->GetPhysicsLinearVelocity() : FVector::ZeroVector;
+	const FVector AngularVelocity = bSimulating ? Body->GetPhysicsAngularVelocityInRadians() : FVector::ZeroVector;
+
+	Owner->SetActorTransform(New, false, nullptr, ETeleportType::TeleportPhysics);
+
+	if (bSimulating)
+	{
+		Body->SetPhysicsLinearVelocity(Warp.TransformVector(LinearVelocity));
+		// Angular velocity is an axial vector: it turns with the warp's rotation, isn't scaled,
+		// and reverses under a reflection.
+		const FVector Spin = Warp.TransformVector(AngularVelocity) / ScaleFactor;
+		Body->SetPhysicsAngularVelocityInRadians(bMirrorWarp ? -Spin : Spin);
+		if (!FMath::IsNearlyEqual(ScaleFactor, 1.0, 1e-4))
+		{
+			if (FBodyInstance* Instance = Body->GetBodyInstance())
+			{
+				Instance->UpdateMassProperties(); // the shapes were rescaled; the mass wasn't
+			}
+		}
+	}
+
+	if (bMirrorWarp)
+	{
+		bMirrored = !bMirrored;
+		RefreshMirroredRendering(Owner);
+	}
+
+	// An object in a space follows the portal into the exit's space.
+	UPortalSubsystem* Subsystem = GetWorld()->GetSubsystem<UPortalSubsystem>();
+	const int32 OwnerSpace = UPortalSubsystem::GetActorSpace(Owner);
+	const int32 ToSpace = UPortalSubsystem::GetActorSpace(To);
+	if (Subsystem && OwnerSpace != INDEX_NONE && ToSpace != INDEX_NONE && ToSpace != OwnerSpace)
+	{
+		Subsystem->SetActorSpace(Owner, ToSpace);
+	}
+
+	++TraversalCount;
+	UE_LOG(LogPortalWorlds, Log, TEXT("Object %s traversed %s -> %s (scale x%.3f%s), now at %s, scale %s"),
+		*Owner->GetActorNameOrLabel(), *From->GetActorNameOrLabel(), *To->GetActorNameOrLabel(), ScaleFactor,
+		bMirrorWarp ? (bMirrored ? TEXT(", now mirrored") : TEXT(", no longer mirrored")) : TEXT(""),
+		*Owner->GetActorLocation().ToString(), *Owner->GetActorScale3D().ToString());
+	OnPortalTraversed.Broadcast(From, To, static_cast<float>(ScaleFactor));
+}
+
+AActor* UPortalTraversalComponent::GetOrCreateCrossingCopy()
+{
+	if (CrossingCopy)
+	{
+		return CrossingCopy;
+	}
+	AActor* Owner = GetOwner();
+	FActorSpawnParameters Params;
+	Params.ObjectFlags |= RF_Transient;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	CrossingCopy = GetWorld()->SpawnActor<AActor>(AActor::StaticClass(), Owner->GetActorTransform(), Params);
+	if (!CrossingCopy)
+	{
+		return nullptr;
+	}
+#if WITH_EDITOR
+	CrossingCopy->SetActorLabel(Owner->GetActorNameOrLabel() + TEXT("_PortalCopy"));
+#endif
+	USceneComponent* Root = NewObject<USceneComponent>(CrossingCopy, TEXT("Root"));
+	CrossingCopy->SetRootComponent(Root);
+	Root->RegisterComponent();
+
+	// Each static mesh at the same place relative to the actor (worked out with matrices: FTransform
+	// can't represent every combination of negative scale and rotation).
+	const FMatrix ToOwnerLocal = Owner->GetActorTransform().ToInverseMatrixWithScale();
+	TArray<UStaticMeshComponent*> Meshes;
+	Owner->GetComponents(Meshes);
+	for (const UStaticMeshComponent* Source : Meshes)
+	{
+		UStaticMeshComponent* Mesh = NewObject<UStaticMeshComponent>(CrossingCopy);
+		Mesh->SetStaticMesh(Source->GetStaticMesh());
+		for (int32 Index = 0; Index < Source->GetNumMaterials(); ++Index)
+		{
+			Mesh->SetMaterial(Index, Source->GetMaterial(Index));
+		}
+		Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		Mesh->SetGenerateOverlapEvents(false);
+		Mesh->SetCastShadow(Source->CastShadow);
+		Mesh->SetupAttachment(Root);
+		Mesh->SetRelativeTransform(FTransform(Source->GetComponentTransform().ToMatrixWithScale() * ToOwnerLocal));
+		Mesh->RegisterComponent();
+		CrossingCopy->AddInstanceComponent(Mesh);
+	}
+	CrossingCopy->SetActorHiddenInGame(true);
+	bCrossingCopyMirrored = Owner->GetActorTransform().ToMatrixWithScale().Determinant() < 0.0;
+	return CrossingCopy;
+}
+
+void UPortalTraversalComponent::UpdateCrossingCopy()
+{
+	AActor* Owner = GetOwner();
+	if (Cast<APawn>(Owner))
+	{
+		return; // the player is never seen from outside
+	}
+	UPortalSubsystem* Subsystem = GetWorld()->GetSubsystem<UPortalSubsystem>();
+
+	// The nearest portal that the owner's bounds reach, and where it leads from the owner's side.
+	APortal* Through = nullptr;
+	APortal* Link = nullptr;
+	if (bShowCopyWhileCrossing && Subsystem && Eye)
+	{
+		const FVector Centre = Eye->GetComponentLocation();
+		FVector Origin, Extent;
+		Owner->GetActorBounds(/*bOnlyCollidingComponents*/ false, Origin, Extent);
+		double Nearest = Extent.Size() + (Origin - Centre).Size();
+		for (const TWeakObjectPtr<APortal>& PortalPtr : Subsystem->GetPortals())
+		{
+			APortal* Portal = PortalPtr.Get();
+			const double Distance = Portal ? Portal->DistanceTo(Centre) : TNumericLimits<double>::Max();
+			if (Distance < Nearest)
+			{
+				Nearest = Distance;
+				Through = Portal;
+			}
+		}
+		Link = Through ? Through->GetLinkFor(Centre) : nullptr;
+	}
+
+	if (!Link)
+	{
+		if (CrossingCopy && !CrossingCopy->IsHidden())
+		{
+			CrossingCopy->SetActorHiddenInGame(true);
+		}
+		return;
+	}
+
+	AActor* Copy = GetOrCreateCrossingCopy();
+	if (!Copy)
+	{
+		return;
+	}
+	const FMatrix CopyMatrix = Owner->GetActorTransform().ToMatrixWithScale() * Through->GetWarpTo(Link);
+	Copy->SetActorTransform(FTransform(CopyMatrix));
+	Copy->SetActorHiddenInGame(false);
+	const bool bCopyMirrored = CopyMatrix.Determinant() < 0.0;
+	if (bCopyMirrored != bCrossingCopyMirrored)
+	{
+		bCrossingCopyMirrored = bCopyMirrored;
+		RefreshMirroredRendering(Copy);
+	}
+
+	// The copy belongs to the exit portal's space, so views of that space show it.
+	const int32 LinkSpace = UPortalSubsystem::GetActorSpace(Link);
+	if (UPortalSubsystem::GetActorSpace(Copy) != LinkSpace)
+	{
+		Subsystem->SetActorSpace(Copy, LinkSpace);
+	}
 }

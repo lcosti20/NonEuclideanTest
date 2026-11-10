@@ -4,6 +4,7 @@ Seamless, recursive portals for non-Euclidean spaces: tunnels longer inside than
 
 - **Rendering:** portals render the scene through other portals, up to a set depth, using scene captures. The edge of a portal is invisible and there's no frame lag.
 - **Walking through:** the player passes through portals with no visible jump. A portal of a different size scales the player, and a mirroring portal flips the world left-right.
+- **Objects:** physics objects pass through too, thrown or carried. A scaling portal resizes them and a mirroring portal flips their handedness.
 - **Spaces:** keep alternative rooms out of sight of each other.
 
 Tested on Windows (D3D12) with UE 5.8 only.
@@ -37,6 +38,7 @@ Everything works from Blueprint; no C++ project is needed.
   UPortalSubsystem::MirrorViewRotationInput(PCOwner, OutDeltaRot);
   ```
 - **Traversal:** add a **Portal Traversal** component (`UPortalTraversalComponent`) to the player pawn. It finds the pawn's camera automatically; set **Eye** only to track a different component. It ticks after character movement and teleports the pawn when the camera crosses a portal.
+- **Carrying objects (optional):** add a **Portal Grab** component (`UPortalGrabComponent`) to the pawn as well, and bind keys to **Toggle Grab** and **Throw**. See [Objects](#objects).
 
 ## Place portals
 
@@ -75,6 +77,32 @@ A mirroring portal reflects space across its width: everything seen through it i
 - **A visible player body or first-person arms** is flipped along with the world, so a right-handed weapon appears in the left hand. Give the body a negative scale while mirrored to cancel it.
 - The flip assumes a centred (symmetric) projection, which the player's camera normally has.
 
+## Objects
+
+Anything that isn't a pawn can pass through portals too: add a **Portal Traversal** component to it. The point that has to cross is the root component's origin, so give the object a centred pivot.
+
+**What changes:** when the object crosses, its whole transform goes through the portal.
+- **Size:** a portal of a different size resizes the object.
+- **Handedness:** a mirroring portal gives the object a negative scale, so its shape is really mirrored in the world. A left-handed object comes out right-handed. **Is Mirrored** on its traversal component tells you which way round it is.
+- **Motion:** a simulating root keeps moving. Linear and angular velocity go through the portal with it, and its mass is recomputed after a size change.
+- **Spaces:** an object tagged with a space moves to the exit portal's space.
+
+**Partway through:** while an object straddles a portal, a copy of its static meshes is shown at the other side (**Show Copy While Crossing**, on by default). The copy shows the part that's already through, so the object doesn't vanish into the portal surface. The portal surface hides the part of each that's on the wrong side.
+
+**Rendering mirrored objects:** a mesh decides which faces to cull when its render state is created, from the sign of its scale. It keeps that choice when only its transform changes, so an object mirrored after it first appears would render inside out. Traversal rebuilds the render state whenever an object's handedness changes. If you mirror an actor yourself (e.g. set a negative scale at runtime), call **Refresh Mirrored Rendering** on it afterwards.
+
+**Collision:** give mirrored objects simple collision made of boxes, spheres or convex hulls on a single body. Chaos handles those at a negative scale. Bodies welded from several components don't rescale correctly when their scale changes.
+
+### Carrying objects
+
+The **Portal Grab** component picks up the physics object under the crosshair, carries it with a physics handle and throws it. It works out the hold point in the player's own frame (position, heading, size, mirrored state), so carrying works through portals:
+- The object usually reaches the portal first. Its own traversal component sends it through, resized or mirrored, and the hold point follows it to the other side.
+- The player then crosses, the two warps cancel, and the object is back in front of them.
+
+So **an object carried through a portal changes together with the player**: carry a key through a mirror and both are mirrored, and to the player it still looks the same. To change an object *relative to the player*, throw it through, or carry it through and walk back round.
+
+Aiming looks through portals too, so an object seen through a portal can be picked up. Objects larger than **Max Object Radius** (relative to the player's size) can't be lifted. A held object ignores collision with pawns. It's dropped if it stays out of reach for half a second, for example caught on a wall.
+
 ## Spaces
 
 The alternative versions of a room have to exist somewhere. The usual approach is to build them far apart, for example 200–500 m. To keep each version from showing on the horizon of the others, put each one in a **space**: tag every actor of space *n* (geometry and portals) with `PortalSpace.<n>`. Untagged actors (sky, player) appear in every space.
@@ -96,7 +124,20 @@ A portal belongs to its space too: from any other space it's invisible, and so i
 | **Is Mirrored** | True after an odd number of mirroring portals |
 | **Set Mirrored** | Set the mirrored state yourself (e.g. on respawn) |
 | **Mirror Movement Input** | While mirrored, reflect movement input left-right (default on) |
-| **Eye** | The tracked component (defaults to the camera) |
+| **Eye** | The tracked component (defaults to the camera, or the root for objects) |
+| **Show Copy While Crossing** | Objects: show a copy at the far side while partway through a portal (default on) |
+| **Refresh Mirrored Rendering** | Rebuild an actor's render state after flipping the sign of its scale yourself, so it doesn't render inside out |
+
+**Portal Grab component**
+
+| Name | What it does |
+| --- | --- |
+| **Grab** / **Release** / **Toggle Grab** | Pick up the object under the crosshair (also through portals), drop it, or whichever applies |
+| **Throw** | Throw the held object forwards at **Throw Speed** |
+| **Is Holding**, **Get Held Component** | What's held |
+| **Get Aimed Component** | What **Grab** would pick up now (for prompts) |
+| **Get Held Relative Scale** | The held object's size relative to the player |
+| **Grab Range**, **Hold Gap**, **Max Object Radius**, **Throw Speed**, **Break Distance** | Tuning, in cm at the player's normal size |
 
 **Portal Subsystem** (the **Get PortalSubsystem** node)
 
@@ -145,6 +186,8 @@ The views are captured deepest-first into render targets, using the player's exa
 
 Traversal tests the camera's path each frame against every portal rectangle. The plane is moved 2 mm toward the side the camera came from, so the camera never reaches the surface. On a crossing, location, view rotation, velocity and size are warped to the linked portal.
 
+An object (any owner that isn't a pawn) has its whole transform multiplied by the warp. FTransform stores a negative determinant as a negative X scale. A held object's hold point is the player's frame times a "carry warp", which collects the portals between the player and the object: each trip the object makes is appended, and each trip the player makes is cancelled out. When the object goes through, the physics handle re-grabs it in place. Otherwise the handle's kinematic anchor would sweep across the jump in one physics step and fling the object.
+
 A mirroring warp (negative determinant) can't be applied to a camera, so each view carries a mirrored flag. It's captured with the matching unmirrored camera, whose image is the true view flipped left-right. A portal shows its child view with `MirrorU` = parent flipped XOR child flipped, and the player's own view is flipped by the post-process pass while they're mirrored.
 
 ## Limitations
@@ -153,5 +196,6 @@ A mirroring warp (negative determinant) can't be applied to a camera, so each vi
 - **Portals hidden behind geometry still get captured,** because visibility is tested on the CPU rather than with GPU occlusion queries.
 - **The look was verified with unlit, fixed-exposure scenes.** With Lumen, auto-exposure or temporal anti-aliasing (TSR/TAA), check the portal edge in your own scenes. A portal linked to itself should be invisible.
 - **Single player, single view.** No split-screen, no VR stereo.
-- **Only the traversing actor is moved.** Objects halfway through a portal aren't cloned on the other side.
+- **Objects partway through a portal are shown, not simulated, on the far side.** The copy has no collision, so the part that's through doesn't collide with anything until the object's centre crosses.
+- **Held objects are pulled by a physics handle.** A fast-moving player can outrun one. It then trails behind, and may reach a portal after the player, which is still correct, just less tidy.
 - **Uniform portal scale only,** apart from the sign of X for mirroring portals.
