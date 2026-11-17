@@ -397,9 +397,10 @@ namespace
 #if WITH_EDITORONLY_DATA
 	/**
 	 * Why a material can't be cut at the portal, or an empty string if it can: its base material (instances
-	 * inherit the parent's graph) has to be Masked and call MF_PortalClip. This reads the base material's
-	 * Blend Mode setting: an instance's cached copy can be stale after its parent changes in the editor, and
-	 * GetBlendMode() reports Opaque for masked materials flagged as "can be assumed opaque".
+	 * inherit the parent's graph) has to call MF_PortalClip, and the material has to render as Masked.
+	 * GetBlendMode() is what the renderer uses: it reports Opaque for a Masked material whose saved
+	 * bCanMaskedBeAssumedOpaque flag is set (which a duplicate of an old opaque material can inherit),
+	 * and the mask is then ignored.
 	 */
 	FString WhyMaterialIgnoresPortalClip(const UMaterialInterface* Material)
 	{
@@ -418,9 +419,11 @@ namespace
 		{
 			return TEXT("doesn't call MF_PortalClip");
 		}
-		if (Base->BlendMode != BLEND_Masked)
+		if (Material->GetBlendMode() != BLEND_Masked)
 		{
-			return TEXT("not Masked");
+			return Base->BlendMode == BLEND_Masked
+				? TEXT("set to Masked but renders as Opaque because the engine assumes the mask is always opaque; recreate the base material instead of duplicating an opaque one")
+				: TEXT("not Masked");
 		}
 		return FString();
 	}
