@@ -145,13 +145,19 @@ UPrimitiveComponent* UPortalGrabComponent::TraceForObject(FMatrix& OutWarp) cons
 		// The part of an object past the portal it's partway through is cut away (it's drawn at the
 		// linked portal instead), and no view, direct or through a portal, ever shows it. So the
 		// trace looks straight through it, as if it weren't there.
+		// Where a hit is tested: the hit point, except when the trace starts inside the object. A hop
+		// through a portal starts on the exit portal's plane, so it can start inside an object cut
+		// there, and that hit lies on the plane itself; the side the trace heads into is the side it
+		// sees. (Nudging every hit along the trace would let hits just short of the plane, on the
+		// cut-away part, count as the kept part.)
 		const FVector HopDirection = (End - From).GetSafeNormal();
-		const auto IsHiddenFromTrace = [Subsystem, HopDirection](const FHitResult& H)
+		const auto SeenPoint = [&From, &HopDirection](const FHitResult& H) -> FVector
 		{
-			// Tested a little way into the object along the trace: a hop through a portal starts on the
-			// exit portal's plane, so it can start inside an object cut there, and that hit lies on the
-			// plane itself. The side the trace heads into is the side it sees.
-			return Subsystem && Subsystem->IsInCutAwayPart(H.GetActor(), H.ImpactPoint + HopDirection * 0.5);
+			return H.bStartPenetrating || H.Distance < UE_KINDA_SMALL_NUMBER ? From + HopDirection * 0.5 : FVector(H.ImpactPoint);
+		};
+		const auto IsHiddenFromTrace = [Subsystem, &SeenPoint](const FHitResult& H)
+		{
+			return Subsystem && Subsystem->IsInCutAwayPart(H.GetActor(), SeenPoint(H));
 		};
 		for (int32 Skipped = 0; bHit && Skipped < 4 && IsHiddenFromTrace(Hit); ++Skipped)
 		{
@@ -185,7 +191,7 @@ UPrimitiveComponent* UPortalGrabComponent::TraceForObject(FMatrix& OutWarp) cons
 				{
 					FHitResult CopyHit;
 					if (Primitive->LineTraceComponent(CopyHit, From, End, HopParams) && CopyHit.Distance < Nearest
-						&& !Subsystem->IsInCutAwayPart(Copy, CopyHit.ImpactPoint + HopDirection * 0.5))
+						&& !Subsystem->IsInCutAwayPart(Copy, SeenPoint(CopyHit)))
 					{
 						Nearest = CopyHit.Distance;
 						CopiedBody = Body;
