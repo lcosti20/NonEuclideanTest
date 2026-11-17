@@ -7,6 +7,7 @@
 #include "Engine/World.h"
 #include "HAL/IConsoleManager.h"
 #include "Materials/MaterialFunctionInterface.h"
+#include "Materials/Material.h"
 #include "Materials/MaterialInterface.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
@@ -393,32 +394,37 @@ AActor* UPortalTraversalComponent::GetOrCreateCrossingCopy()
 
 namespace
 {
-	/** Whether a material can be cut at the portal: masked, and calling MF_PortalClip (which reads PortalClipPlane). */
-	bool MaterialSupportsPortalClip(const UMaterialInterface* Material)
-	{
-		if (!Material || Material->GetBlendMode() != BLEND_Masked)
-		{
-			return false;
-		}
-		TArray<FMaterialParameterInfo> Infos;
-		TArray<FGuid> Ids;
-		Material->GetAllVectorParameterInfo(Infos, Ids);
-		if (Infos.ContainsByPredicate([](const FMaterialParameterInfo& Info) { return Info.Name == TEXT("PortalClipPlane"); }))
-		{
-			return true;
-		}
 #if WITH_EDITORONLY_DATA
+	/**
+	 * Why a material can't be cut at the portal, or an empty string if it can: its base material (instances
+	 * inherit the parent's graph) has to be Masked and call MF_PortalClip. This reads the base material's
+	 * Blend Mode setting: an instance's cached copy can be stale after its parent changes in the editor, and
+	 * GetBlendMode() reports Opaque for masked materials flagged as "can be assumed opaque".
+	 */
+	FString WhyMaterialIgnoresPortalClip(const UMaterialInterface* Material)
+	{
+		const UMaterial* Base = Material ? Material->GetMaterial() : nullptr;
+		if (!Base)
+		{
+			return TEXT("no material");
+		}
 		bool bUsesClip = false;
-		Material->IterateDependentFunctions([&bUsesClip](UMaterialFunctionInterface* Function)
+		Base->IterateDependentFunctions([&bUsesClip](UMaterialFunctionInterface* Function)
 		{
 			bUsesClip = Function && Function->GetFName() == TEXT("MF_PortalClip");
 			return !bUsesClip; // keep going until found
 		});
-		return bUsesClip;
-#else
-		return false;
-#endif
+		if (!bUsesClip)
+		{
+			return TEXT("doesn't call MF_PortalClip");
+		}
+		if (Base->BlendMode != BLEND_Masked)
+		{
+			return TEXT("not Masked");
+		}
+		return FString();
 	}
+#endif
 
 	/** A plane keeping the points P with dot(P, Normal) >= W, packed as (Normal, W) for MF_PortalClip. */
 	FVector4f MakeClipPlane(const FVector& KeepNormal, const FVector& PointOnPlane)
@@ -444,6 +450,7 @@ void UPortalTraversalComponent::SetClipPlane(AActor* Actor, const FVector4f& Pla
 
 void UPortalTraversalComponent::WarnIfMaterialsIgnoreClip() const
 {
+#if WITH_EDITORONLY_DATA
 	const AActor* Owner = GetOwner();
 	TArray<UPrimitiveComponent*> Primitives;
 	Owner->GetComponents(Primitives);
@@ -453,19 +460,21 @@ void UPortalTraversalComponent::WarnIfMaterialsIgnoreClip() const
 		for (int32 Index = 0; Index < Primitive->GetNumMaterials(); ++Index)
 		{
 			const UMaterialInterface* Material = Primitive->GetMaterial(Index);
-			if (!MaterialSupportsPortalClip(Material))
+			const FString Why = WhyMaterialIgnoresPortalClip(Material);
+			if (!Why.IsEmpty())
 			{
-				Unsupported.AddUnique(Material ? Material->GetPathName() : FString(TEXT("(none)")));
+				Unsupported.AddUnique(FString::Printf(TEXT("%s (%s)"), Material ? *Material->GetPathName() : TEXT("(none)"), *Why));
 			}
 		}
 	}
 	if (Unsupported.Num() > 0)
 	{
-		UE_LOG(LogPortalWorlds, Warning, TEXT("%s has Clip At Portal on, but these materials don't call MF_PortalClip, so it ")
+		UE_LOG(LogPortalWorlds, Warning, TEXT("%s has Clip At Portal on, but some of its materials don't support the cut, so it ")
 			TEXT("won't be cut at the portal and will poke out of the far side: %s. Use a Masked material whose Opacity Mask comes ")
 			TEXT("from /PortalWorlds/Materials/MF_PortalClip, or turn Clip At Portal off."),
 			*Owner->GetActorNameOrLabel(), *FString::Join(Unsupported, TEXT(", ")));
 	}
+#endif
 }
 
 void UPortalTraversalComponent::UpdateCrossingCopy()
@@ -508,11 +517,13 @@ void UPortalTraversalComponent::UpdateCrossingCopy()
 	{
 		KeepNormal = Through->GetNormal() * (Through->SignedDistance(Centre) >= 0.0 ? 1.0 : -1.0);
 	}
+#if WITH_EDITOR
 	if (Link && bClip && !bCheckedClipMaterials)
 	{
 		bCheckedClipMaterials = true;
 		WarnIfMaterialsIgnoreClip();
 	}
+#endif
 	SetClipPlane(Owner, Link && bClip ? MakeClipPlane(KeepNormal, Through->GetActorLocation()) : NoClip, OwnerClipPlane);
 	if (Subsystem)
 	{
