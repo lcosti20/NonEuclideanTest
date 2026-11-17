@@ -615,11 +615,39 @@ void UPortalSubsystem::CaptureNode(int32 NodeIndex)
 	{
 		Capture->HiddenActors.Append(Space->HiddenActors);
 	}
+	for (const TPair<TWeakObjectPtr<AActor>, FClippedActor>& Clipped : ClippedActors)
+	{
+		// Cut at the exit portal, keeping the camera's side: nothing of it is beyond the portal.
+		AActor* Actor = Clipped.Key.Get();
+		if (Actor && Clipped.Value.Portal.Get() == Node.ExitPortal && FVector::DotProduct(Clipped.Value.KeepNormal, Node.ClipNormal) < 0.0)
+		{
+			Capture->HiddenActors.Add(Actor);
+		}
+	}
 	Capture->PostProcessSettings = ViewPostProcess;
 	Capture->PostProcessBlendWeight = ViewPostProcessWeight;
 	Capture->TextureTarget = Targets[NodeIndex];
 	Capture->CaptureScene();
 	++LastCaptureCount;
+}
+
+void UPortalSubsystem::SetActorClippedAtPortal(AActor* Actor, const APortal* Portal, const FVector& KeepNormal)
+{
+	if (Portal && Actor)
+	{
+		ClippedActors.Add(Actor, FClippedActor{ Portal, KeepNormal });
+	}
+	else
+	{
+		ClippedActors.Remove(Actor);
+	}
+	for (auto It = ClippedActors.CreateIterator(); It; ++It)
+	{
+		if (!It->Key.IsValid())
+		{
+			It.RemoveCurrent();
+		}
+	}
 }
 
 void UPortalSubsystem::EnsureCaptureResources(int32 NodeIndex)

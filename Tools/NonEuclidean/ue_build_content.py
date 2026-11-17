@@ -5,7 +5,8 @@ Run in the full editor after ue_phase0_import.py (spawning actors doesn't work i
       -ExecutePythonScript="<dir>/run_and_quit.py ue_build_content.py [stage ...]"
 
 Stages: materials, meshes, maps (default: all three); "mirror" builds only L_NE_Mirror; "puzzle"
-builds only L_NE_ObjectPuzzles with its materials and meshes (run make_puzzle_meshes.py first). Portals come from the PortalWorlds plugin
+builds only L_NE_ObjectPuzzles with its materials and meshes (run make_puzzle_meshes.py first);
+"clip" only adds the portal clip (MF_PortalClip) to the existing M_PW_Color, without touching the map. Portals come from the PortalWorlds plugin
 (/Script/PortalWorlds.Portal, /PortalWorlds/... assets).
 
 Coordinate conversion from the original engine (metres, Y-up, right-handed), confirmed
@@ -573,6 +574,21 @@ def puzzle_material(name, translucent=False):
     return mat
 
 
+def add_portal_clip(mat):
+    """Masked blend mode, with the PortalWorlds MF_PortalClip function as the opacity mask, so an
+    object is cut at a portal while it's partway through. Does nothing if it's already there."""
+    if mel.get_material_property_input_node(mat, unreal.MaterialProperty.MP_OPACITY_MASK):
+        log(f"{mat.get_name()} already has an opacity mask")
+        return
+    mat.set_editor_property("blend_mode", unreal.BlendMode.BLEND_MASKED)
+    call = mel.create_material_expression(mat, unreal.MaterialExpressionMaterialFunctionCall, -300, 400)
+    call.set_editor_property("material_function", eal.load_asset("/PortalWorlds/Materials/MF_PortalClip"))
+    mel.connect_material_property(call, "Mask", unreal.MaterialProperty.MP_OPACITY_MASK)
+    mel.recompile_material(mat)
+    eal.save_loaded_asset(mat)
+    log(f"portal clip added to {mat.get_path_name()}")
+
+
 def puzzle_instance(name, parent, rgb):
     path = f"{PUZZLE_MAT_DIR}/{name}"
     fresh(path)
@@ -586,6 +602,7 @@ def puzzle_instance(name, parent, rgb):
 
 def build_puzzle_materials():
     color = puzzle_material("M_PW_Color")
+    add_portal_clip(color)  # crates and keys are cut at a portal while partway through
     ghost = puzzle_material("M_PW_Ghost", translucent=True)
     puzzle_instance("MI_PW_KeyHead", color, (0.9, 0.18, 0.12))
     puzzle_instance("MI_PW_Crate", color, (0.95, 0.55, 0.15))
@@ -818,6 +835,8 @@ def main():
         build_mirror()
     if "maps" in stages or "puzzle" in stages:
         build_puzzle()
+    if "clip" in stages:
+        add_portal_clip(eal.load_asset(f"{PUZZLE_MAT_DIR}/M_PW_Color"))
 
 
 main()

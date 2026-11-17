@@ -10,6 +10,12 @@ M_PortalMirrorView: post-process material, after tonemapping, that shows the sce
 left-right when its Mirror parameter is 1. UPortalSubsystem blends it into the player's view in
 worlds with mirroring portals (Mirror = 1 while the player is mirrored). It's only refreshed if it
 exists; delete the .uasset (editor closed) to rebuild its graph.
+
+MF_PortalClip: material function whose Mask output is 0 on the far side of the clip plane that
+UPortalTraversalComponent writes to custom primitive data 32-35 while an object is partway through
+a portal (xyz = normal of the side to keep, w = offset; all zero = keep everything). Connect it to
+the Opacity Mask of a Masked material (multiply it with any mask the material already has). It's
+rebuilt in place.
 """
 
 import unreal
@@ -100,5 +106,55 @@ def build_mirror_view():
     save(mat)
 
 
+CLIP_DATA_INDEX = 32  # UPortalTraversalComponent::ClipPlaneDataIndex
+CLIP_CODE = (
+    "// Portal clip plane (UPortalTraversalComponent): Plane.xyz = normal of the side to keep,\n"
+    "// Plane.w = offset. All zero (not crossing a portal): keep everything.\n"
+    "return (dot(Plane.xyz, Plane.xyz) < 0.25 || dot(P, Plane.xyz) >= Plane.w) ? 1.0 : 0.0;"
+)
+
+
+def build_clip_function():
+    name = "MF_PortalClip"
+    path = f"{DIR}/{name}"
+    if eal.does_asset_exist(path):
+        func = eal.load_asset(path)
+        mel.delete_all_material_expressions_in_function(func)
+    else:
+        func = asset_tools.create_asset(name, DIR, unreal.MaterialFunction, unreal.MaterialFunctionFactoryNew())
+    func.set_editor_property("description",
+                             "Opacity mask that cuts an object at a portal while it's partway through "
+                             "(UPortalTraversalComponent). Use a Masked blend mode.")
+    func.set_editor_property("expose_to_library", True)
+
+    add = lambda cls, x, y: mel.create_material_expression_in_function(func, cls, x, y)
+    plane = add(unreal.MaterialExpressionVectorParameter, -700, 0)
+    plane.set_editor_property("parameter_name", "PortalClipPlane")
+    plane.set_editor_property("default_value", unreal.LinearColor(0.0, 0.0, 0.0, 0.0))
+    plane.set_editor_property("use_custom_primitive_data", True)
+    plane.set_editor_property("primitive_data_index", CLIP_DATA_INDEX)
+    pos = add(unreal.MaterialExpressionWorldPosition, -700, 250)
+
+    node = add(unreal.MaterialExpressionCustom, -350, 0)
+    node.set_editor_property("code", CLIP_CODE)
+    node.set_editor_property("output_type", unreal.CustomMaterialOutputType.CMOT_FLOAT1)
+    inputs = []
+    for input_name in ("Plane", "P"):
+        ci = unreal.CustomInput()
+        ci.set_editor_property("input_name", input_name)
+        inputs.append(ci)
+    node.set_editor_property("inputs", inputs)
+    mel.connect_material_expressions(plane, "RGBA", node, "Plane")
+    mel.connect_material_expressions(pos, "", node, "P")
+
+    out = add(unreal.MaterialExpressionFunctionOutput, 0, 0)
+    out.set_editor_property("output_name", "Mask")
+    mel.connect_material_expressions(node, "", out, "")
+    mel.update_material_function(func, None)
+    eal.save_loaded_asset(func)
+    log(f"material function {path}")
+
+
 build_portal()
 build_mirror_view()
+build_clip_function()

@@ -251,6 +251,13 @@ The crate shows its full depth: the half that's through is drawn by the crossing
 seen through the portal. `-NEPlace=Mirror key:-40,1300,25,0,-1;Spare key:40,1300,25,0,1 -NEPose=0,1420,100,-90,-35`
 shows the two keys as exact mirror images, with no inside-out faces at the negative scale.
 
+**Cutting at the portal.** `M_PW_Color` uses the plugin's `MF_PortalClip`, so crates and keys are cut at a portal
+while partway through (`build_plugin_materials.py` builds the function, and `ue_build_content.py clip` adds it to an
+existing `M_PW_Color`). With `-NEPlace=Crate A:900,310,100,20,1`, the crate's centre is just past the big portal's
+plane. Looking at each portal from each side (`-NEPose=900,150,150,90,-25`, `900,450,150,-90,-25`,
+`1400,-800,60,90,-20`, `1400,-600,60,-90,-20`), it now shows whole from the two sides it's really on and not at
+all from the other two. With `-ExecCmds="Portal.ClipObjects 0"` it shows from all four.
+
 Re-checked after the plugin changes (unchanged from before): the scale laps (`L_NE_Scale`, 1 → 0.5 → 0.25) and the
 mirror there-and-back (`L_NE_Mirror`: mirrored, not mirrored, mirrored).
 

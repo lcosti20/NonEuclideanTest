@@ -87,7 +87,15 @@ Anything that isn't a pawn can pass through portals too: add a **Portal Traversa
 - **Motion:** a simulating root keeps moving. Linear and angular velocity go through the portal with it, and its mass is recomputed after a size change.
 - **Spaces:** an object tagged with a space moves to the exit portal's space.
 
-**Partway through:** while an object straddles a portal, a copy of its static meshes is shown at the other side (**Show Copy While Crossing**, on by default). The copy shows the part that's already through, so the object doesn't vanish into the portal surface. The portal surface hides the part of each that's on the wrong side.
+**Partway through:** while an object straddles a portal, a copy of its static meshes is shown at the other side (**Show Copy While Crossing**, on by default). The copy shows the part that's already through, so the object doesn't vanish into the portal surface.
+
+**Cutting at the portal:** both the object and its copy are cut at the portal plane (**Clip At Portal**, on by default). The object keeps the side its centre is on, and the copy keeps only the part that's through. So from every side, each part appears once, in the right place. Without the cut, the part that's through also sticks out of the back of the entry portal, and the copy sticks out of the back of the exit portal.
+
+The cut is done in the material, so the object's materials have to support it:
+1. Set the material's **Blend Mode** to **Masked**.
+2. Add the **MF_PortalClip** function (`/PortalWorlds/Materials/MF_PortalClip`) and connect its **Mask** output to **Opacity Mask**. If the material already has a mask, multiply the two.
+
+A material without it ignores the cut and draws the whole object, as before. The traversal component writes the plane into custom primitive data 32–35 of every primitive of the object and of its copy, so don't use those indices for anything else on traversing objects. `Portal.ClipObjects 0` turns cutting off everywhere, for comparison.
 
 **Rendering mirrored objects:** a mesh decides which faces to cull when its render state is created, from the sign of its scale. It keeps that choice when only its transform changes, so an object mirrored after it first appears would render inside out. Traversal rebuilds the render state whenever an object's handedness changes. If you mirror an actor yourself (e.g. set a negative scale at runtime), call **Refresh Mirrored Rendering** on it afterwards.
 
@@ -126,6 +134,7 @@ A portal belongs to its space too: from any other space it's invisible, and so i
 | **Mirror Movement Input** | While mirrored, reflect movement input left-right (default on) |
 | **Eye** | The tracked component (defaults to the camera, or the root for objects) |
 | **Show Copy While Crossing** | Objects: show a copy at the far side while partway through a portal (default on) |
+| **Clip At Portal** | Objects: cut the object and its copy at the portal plane while partway through, so each part appears on one side only. Needs materials that use `MF_PortalClip` (default on) |
 | **Refresh Mirrored Rendering** | Rebuild an actor's render state after flipping the sign of its scale yourself, so it doesn't render inside out |
 
 **Portal Grab component**
@@ -175,6 +184,7 @@ A portal belongs to its space too: from any other space it's invisible, and so i
 | `Portal.Debug` | 0 | Draw all portals flat pink, no captures |
 | `Portal.Hide` | 0 | Hide portal surfaces, no captures |
 | `Portal.ShowStats` | 0 | On-screen view, capture and near-plane info |
+| `Portal.ClipObjects` | 1 | Cut objects and their copies at the portal plane while they're partway through (see [Objects](#objects)) |
 
 Log category: `LogPortalWorlds` (traversals at Log, render-target creation at Verbose).
 
@@ -186,6 +196,8 @@ The views are captured deepest-first into render targets, using the player's exa
 
 Traversal tests the camera's path each frame against every portal rectangle. The plane is moved 2 mm toward the side the camera came from, so the camera never reaches the surface. On a crossing, location, view rotation, velocity and size are warped to the linked portal.
 
+While an object is partway through, its traversal component writes a plane into the custom primitive data of the object's primitives (the side it keeps) and of its copy's (the part that's through). `MF_PortalClip` discards pixels on the other side. Each portal view clips at its exit portal, but that clip plane is pulled towards the camera by the near-plane distance (up to 10 cm), so a view through the portal that a cut object is kept in front of would still show it. Such views hide the object altogether: everything left of it is between their camera and the portal.
+
 An object (any owner that isn't a pawn) has its whole transform multiplied by the warp. FTransform stores a negative determinant as a negative X scale. A held object's hold point is the player's frame times a "carry warp", which collects the portals between the player and the object: each trip the object makes is appended, and each trip the player makes is cancelled out. When the object goes through, the physics handle re-grabs it in place. Otherwise the handle's kinematic anchor would sweep across the jump in one physics step and fling the object.
 
 A mirroring warp (negative determinant) can't be applied to a camera, so each view carries a mirrored flag. It's captured with the matching unmirrored camera, whose image is the true view flipped left-right. A portal shows its child view with `MirrorU` = parent flipped XOR child flipped, and the player's own view is flipped by the post-process pass while they're mirrored.
@@ -196,6 +208,7 @@ A mirroring warp (negative determinant) can't be applied to a camera, so each vi
 - **Portals hidden behind geometry still get captured,** because visibility is tested on the CPU rather than with GPU occlusion queries.
 - **The look was verified with unlit, fixed-exposure scenes.** With Lumen, auto-exposure or temporal anti-aliasing (TSR/TAA), check the portal edge in your own scenes. A portal linked to itself should be invisible.
 - **Single player, single view.** No split-screen, no VR stereo.
+- **The cut at a portal is a whole plane, not just the portal's rectangle.** If an object straddles the edge of a free-standing portal, the part beside the portal on the far side of the plane is hidden too. In a doorway, that part would be inside the wall anyway.
 - **Objects partway through a portal are shown, not simulated, on the far side.** The copy has no collision, so the part that's through doesn't collide with anything until the object's centre crosses.
 - **Held objects are pulled by a physics handle.** A fast-moving player can outrun one. It then trails behind, and may reach a portal after the player, which is still correct, just less tidy.
 - **Uniform portal scale only,** apart from the sign of X for mirroring portals.

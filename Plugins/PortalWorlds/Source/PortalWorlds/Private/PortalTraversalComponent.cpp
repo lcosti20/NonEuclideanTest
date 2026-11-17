@@ -5,6 +5,7 @@
 #include "Components/PrimitiveComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
+#include "HAL/IConsoleManager.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/Pawn.h"
@@ -17,6 +18,10 @@
 namespace
 {
 	constexpr double BumpDistance = 2.0 * 0.1; // twice the minimum near plane (cm)
+
+	TAutoConsoleVariable<bool> CVarClipObjects(
+		TEXT("Portal.ClipObjects"), true,
+		TEXT("Cut objects (and their crossing copies) at the portal plane while they're partway through (bClipAtPortal). 0 turns it off everywhere."));
 }
 
 UPortalTraversalComponent::UPortalTraversalComponent()
@@ -56,6 +61,11 @@ void UPortalTraversalComponent::BeginPlay()
 
 void UPortalTraversalComponent::EndPlay(const EEndPlayReason::Type Reason)
 {
+	if (UPortalSubsystem* Subsystem = GetWorld() ? GetWorld()->GetSubsystem<UPortalSubsystem>() : nullptr)
+	{
+		Subsystem->SetActorClippedAtPortal(GetOwner(), nullptr, FVector::ZeroVector);
+		Subsystem->SetActorClippedAtPortal(CrossingCopy, nullptr, FVector::ZeroVector);
+	}
 	if (CrossingCopy)
 	{
 		CrossingCopy->Destroy();
@@ -379,6 +389,30 @@ AActor* UPortalTraversalComponent::GetOrCreateCrossingCopy()
 	return CrossingCopy;
 }
 
+namespace
+{
+	/** A plane keeping the points P with dot(P, Normal) >= W, packed as (Normal, W) for MF_PortalClip. */
+	FVector4f MakeClipPlane(const FVector& KeepNormal, const FVector& PointOnPlane)
+	{
+		return FVector4f(FVector3f(KeepNormal), static_cast<float>(FVector::DotProduct(KeepNormal, PointOnPlane)));
+	}
+}
+
+void UPortalTraversalComponent::SetClipPlane(AActor* Actor, const FVector4f& Plane, FVector4f& InOutCurrent)
+{
+	if (!Actor || Plane == InOutCurrent)
+	{
+		return;
+	}
+	InOutCurrent = Plane;
+	TArray<UPrimitiveComponent*> Primitives;
+	Actor->GetComponents(Primitives);
+	for (UPrimitiveComponent* Primitive : Primitives)
+	{
+		Primitive->SetCustomPrimitiveDataVector4f(ClipPlaneDataIndex, Plane);
+	}
+}
+
 void UPortalTraversalComponent::UpdateCrossingCopy()
 {
 	AActor* Owner = GetOwner();
@@ -387,13 +421,14 @@ void UPortalTraversalComponent::UpdateCrossingCopy()
 		return; // the player is never seen from outside
 	}
 	UPortalSubsystem* Subsystem = GetWorld()->GetSubsystem<UPortalSubsystem>();
+	const FVector4f NoClip(0.0f, 0.0f, 0.0f, 0.0f);
 
 	// The nearest portal that the owner's bounds reach, and where it leads from the owner's side.
 	APortal* Through = nullptr;
 	APortal* Link = nullptr;
-	if (bShowCopyWhileCrossing && Subsystem && Eye)
+	const FVector Centre = Eye ? Eye->GetComponentLocation() : Owner->GetActorLocation();
+	if ((bShowCopyWhileCrossing || bClipAtPortal) && Subsystem && Eye)
 	{
-		const FVector Centre = Eye->GetComponentLocation();
 		FVector Origin, Extent;
 		Owner->GetActorBounds(/*bOnlyCollidingComponents*/ false, Origin, Extent);
 		double Nearest = Extent.Size() + (Origin - Centre).Size();
@@ -410,11 +445,29 @@ void UPortalTraversalComponent::UpdateCrossingCopy()
 		Link = Through ? Through->GetLinkFor(Centre) : nullptr;
 	}
 
-	if (!Link)
+	const bool bClip = bClipAtPortal && CVarClipObjects.GetValueOnGameThread();
+
+	// The owner keeps the side of the portal its centre is on: the rest of it is already through.
+	FVector KeepNormal = FVector::ZeroVector;
+	if (Link)
+	{
+		KeepNormal = Through->GetNormal() * (Through->SignedDistance(Centre) >= 0.0 ? 1.0 : -1.0);
+	}
+	SetClipPlane(Owner, Link && bClip ? MakeClipPlane(KeepNormal, Through->GetActorLocation()) : NoClip, OwnerClipPlane);
+	if (Subsystem)
+	{
+		Subsystem->SetActorClippedAtPortal(Owner, Link && bClip ? Through : nullptr, KeepNormal);
+	}
+
+	if (!Link || !bShowCopyWhileCrossing)
 	{
 		if (CrossingCopy && !CrossingCopy->IsHidden())
 		{
 			CrossingCopy->SetActorHiddenInGame(true);
+			if (Subsystem)
+			{
+				Subsystem->SetActorClippedAtPortal(CrossingCopy, nullptr, FVector::ZeroVector);
+			}
 		}
 		return;
 	}
@@ -424,7 +477,8 @@ void UPortalTraversalComponent::UpdateCrossingCopy()
 	{
 		return;
 	}
-	const FMatrix CopyMatrix = Owner->GetActorTransform().ToMatrixWithScale() * Through->GetWarpTo(Link);
+	const FMatrix Warp = Through->GetWarpTo(Link);
+	const FMatrix CopyMatrix = Owner->GetActorTransform().ToMatrixWithScale() * Warp;
 	Copy->SetActorTransform(FTransform(CopyMatrix));
 	Copy->SetActorHiddenInGame(false);
 	const bool bCopyMirrored = CopyMatrix.Determinant() < 0.0;
@@ -433,6 +487,19 @@ void UPortalTraversalComponent::UpdateCrossingCopy()
 		bCrossingCopyMirrored = bCopyMirrored;
 		RefreshMirroredRendering(Copy);
 	}
+
+	// The copy keeps only what's already through: the warped image of the far side of the
+	// entry portal, which is one side of the exit portal.
+	FVector4f CopyPlane = NoClip;
+	FVector CopyKeepNormal = FVector::ZeroVector;
+	if (bClip)
+	{
+		const FVector FarSide = Warp.TransformPosition(Through->GetActorLocation() - KeepNormal * 10.0);
+		CopyKeepNormal = Link->GetNormal() * (Link->SignedDistance(FarSide) >= 0.0 ? 1.0 : -1.0);
+		CopyPlane = MakeClipPlane(CopyKeepNormal, Link->GetActorLocation());
+	}
+	SetClipPlane(Copy, CopyPlane, CopyClipPlane);
+	Subsystem->SetActorClippedAtPortal(Copy, bClip ? Link : nullptr, CopyKeepNormal);
 
 	// The copy belongs to the exit portal's space, so views of that space show it.
 	const int32 LinkSpace = UPortalSubsystem::GetActorSpace(Link);

@@ -112,6 +112,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Portal")
 	void RefreshSpaces() { bSpacesDirty = true; }
 
+	/**
+	 * Tells portal views that Actor is cut at Portal's plane, keeping only the side KeepNormal points
+	 * to (UPortalTraversalComponent does this while an object is partway through). Views through
+	 * Portal from that side then hide Actor: everything left of it is between their camera and the
+	 * portal, where their clip plane's near-plane margin would otherwise show it. Pass a null Portal
+	 * when Actor is no longer cut.
+	 */
+	void SetActorClippedAtPortal(AActor* Actor, const APortal* Portal, const FVector& KeepNormal);
+
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 	virtual void Deinitialize() override;
 
@@ -157,6 +166,13 @@ private:
 	};
 	TMap<int32, FSpace> Spaces;
 	bool bSpacesDirty = true;
+
+	struct FClippedActor
+	{
+		TWeakObjectPtr<const APortal> Portal;
+		FVector KeepNormal = FVector::ZeroVector;
+	};
+	TMap<TWeakObjectPtr<AActor>, FClippedActor> ClippedActors; // see SetActorClippedAtPortal
 	TSet<TObjectKey<APortal>> WarnedMisplacedPortals; // each misplaced portal is reported once
 	bool bSpacesEnabled = true; // Portal.Spaces when the spaces were last built
 	int32 CurrentSpace = INDEX_NONE;

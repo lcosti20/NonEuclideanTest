@@ -47,7 +47,8 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnPortalTraversedSignature, APor
  * and angular velocity are warped, and its mass is recomputed after a size change. If the object is
  * tagged with a space, it moves to the exit portal's space. While the object is partway through a
  * portal, a copy of its static meshes is shown at the other side (bShowCopyWhileCrossing), so it
- * doesn't vanish into the portal surface. Simple collision made of boxes, spheres or convex hulls
+ * doesn't vanish into the portal surface, and both are cut at the portal plane (bClipAtPortal), so
+ * each part is drawn on one side only. Simple collision made of boxes, spheres or convex hulls
  * on a single body works mirrored; welded multi-component bodies don't rescale correctly.
  */
 UCLASS(ClassGroup = (Portals), meta = (BlueprintSpawnableComponent))
@@ -82,6 +83,19 @@ public:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Portal")
 	bool bShowCopyWhileCrossing = true;
+
+	/**
+	 * Objects only: while the owner is partway through a portal, cut it (and its copy) at the portal
+	 * plane, so each part appears on one side only. The owner's materials must call the
+	 * /PortalWorlds/Materials/MF_PortalClip material function (Masked blend mode, Opacity Mask);
+	 * other materials ignore the clip plane. The plane is written to custom primitive data
+	 * ClipPlaneDataIndex..+3 of every primitive.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Portal")
+	bool bClipAtPortal = true;
+
+	/** First of the four custom primitive data floats holding the clip plane (read by MF_PortalClip). */
+	static constexpr int32 ClipPlaneDataIndex = 32;
 
 	/** True while the owner is mirrored relative to the world (after an odd number of mirroring portals). */
 	UFUNCTION(BlueprintPure, Category = "Portal")
@@ -134,6 +148,7 @@ private:
 	void Traverse(APortal* From, APortal* To, const FVector& Bump);
 	void TraverseObject(APortal* From, APortal* To, const FMatrix& Warp, const FVector& Bump);
 	void UpdateCrossingCopy();
+	static void SetClipPlane(AActor* Actor, const FVector4f& Plane, FVector4f& InOutCurrent);
 	AActor* GetOrCreateCrossingCopy();
 	void MirrorPendingInput();
 	void UpdateInputTickPrerequisites();
@@ -148,6 +163,10 @@ private:
 
 	/** Whether the copy was mirrored when its render state was last built. */
 	bool bCrossingCopyMirrored = false;
+
+	/** Clip planes last written to the owner's and the copy's primitives (zero: no clipping). */
+	FVector4f OwnerClipPlane = FVector4f(0.0f, 0.0f, 0.0f, 0.0f);
+	FVector4f CopyClipPlane = FVector4f(0.0f, 0.0f, 0.0f, 0.0f);
 
 	FVector PreviousEye = FVector::ZeroVector;
 	bool bHasPreviousEye = false;
