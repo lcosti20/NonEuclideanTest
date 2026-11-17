@@ -80,6 +80,8 @@ public:
 	/**
 	 * Objects only (owners that aren't pawns): while the owner is partway through a portal, show a
 	 * copy of its static meshes at the linked portal, so the part that's already through is visible.
+	 * The copy is solid to pawns (it uses the meshes' simple collision), and a character walking into
+	 * it pushes the real object, using the character movement's push settings.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Portal")
 	bool bShowCopyWhileCrossing = true;
@@ -90,6 +92,8 @@ public:
 	 * /PortalWorlds/Materials/MF_PortalClip material function (Masked blend mode, Opacity Mask);
 	 * other materials ignore the clip plane. The plane is written to custom primitive data
 	 * ClipPlaneDataIndex..+3 of every primitive.
+	 * While cut, the owner also stops colliding with pawns (ECC_Pawn) that stand on the cut-away side
+	 * near the portal, so they can't bump into the invisible part before they walk through.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Portal")
 	bool bClipAtPortal = true;
@@ -116,6 +120,13 @@ public:
 
 	/** The traversal component of a player's view target (or pawn), if it has one. */
 	static UPortalTraversalComponent* FindForPlayer(const APlayerController* PC);
+
+	/**
+	 * Objects: restores the owner's pawn collision if it was turned off because a pawn stood on the
+	 * cut-away side of a portal. Call before changing the owner's ECC_Pawn response yourself (the grab
+	 * component does), so the response you read and later restore is the real one.
+	 */
+	void StopIgnoringPawns();
 
 	/** Number of portals passed through since play began. */
 	UFUNCTION(BlueprintPure, Category = "Portal")
@@ -150,6 +161,13 @@ private:
 	void UpdateCrossingCopy();
 	static void SetClipPlane(AActor* Actor, const FVector4f& Plane, FVector4f& InOutCurrent);
 	void WarnIfMaterialsIgnoreClip() const;
+	void UpdatePawnCollision(const APortal* Through, const FVector& KeepNormal);
+	bool IsAnyPawnOverlapping() const;
+	bool IsPawnOnCutSide(const AActor* Actor, const APortal* Portal, const FVector& KeepNormal) const;
+	ECollisionResponse GetOwnPawnResponse() const;
+	void SetCopyPawnResponse(ECollisionResponse Response);
+	UFUNCTION()
+	void OnCopyHit(UPrimitiveComponent* HitComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit);
 	AActor* GetOrCreateCrossingCopy();
 	void MirrorPendingInput();
 	void UpdateInputTickPrerequisites();
@@ -165,9 +183,19 @@ private:
 	/** Whether the copy was mirrored when its render state was last built. */
 	bool bCrossingCopyMirrored = false;
 
+	/** Warp from the owner to the copy, as last placed (pushes on the copy go back through its inverse). */
+	FMatrix CopyWarp = FMatrix::Identity;
+
+	/** The copy's current ECC_Pawn response. */
+	TEnumAsByte<ECollisionResponse> CopyPawnResponse = ECR_Ignore;
+
 	/** Clip planes last written to the owner's and the copy's primitives (zero: no clipping). */
 	FVector4f OwnerClipPlane = FVector4f(0.0f, 0.0f, 0.0f, 0.0f);
 	FVector4f CopyClipPlane = FVector4f(0.0f, 0.0f, 0.0f, 0.0f);
+
+	/** Objects: true while the owner's ECC_Pawn response was set to Ignore by UpdatePawnCollision. */
+	bool bIgnoringPawns = false;
+	TEnumAsByte<ECollisionResponse> PawnResponseBeforeIgnore = ECR_Block;
 
 	/** Whether the owner's materials were checked for MF_PortalClip (done once, on the first cut). */
 	bool bCheckedClipMaterials = false;

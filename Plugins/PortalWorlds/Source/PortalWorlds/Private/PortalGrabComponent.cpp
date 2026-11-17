@@ -197,6 +197,10 @@ bool UPortalGrabComponent::Grab()
 	HeldComponent = Component;
 	StuckTime = 0.0f;
 	AllowedDistance = FVector::Dist(Component->GetComponentLocation(), GetHoldTarget().GetLocation()) / (S * MatrixScale(Warp)) + BreakDistance;
+	if (UPortalTraversalComponent* Traversal = Component->GetOwner()->FindComponentByClass<UPortalTraversalComponent>())
+	{
+		Traversal->StopIgnoringPawns(); // so the response saved here is the object's real one
+	}
 	HeldPawnResponse = Component->GetCollisionResponseToChannel(ECC_Pawn);
 	Component->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
 	Component->WakeRigidBody();

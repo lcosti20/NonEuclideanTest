@@ -5,6 +5,7 @@
 #include "Components/PrimitiveComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "HAL/IConsoleManager.h"
 #include "Materials/MaterialFunctionInterface.h"
 #include "Materials/Material.h"
@@ -69,6 +70,7 @@ void UPortalTraversalComponent::EndPlay(const EEndPlayReason::Type Reason)
 		Subsystem->SetActorClippedAtPortal(GetOwner(), nullptr, FVector::ZeroVector);
 		Subsystem->SetActorClippedAtPortal(CrossingCopy, nullptr, FVector::ZeroVector);
 	}
+	StopIgnoringPawns();
 	if (CrossingCopy)
 	{
 		CrossingCopy->Destroy();
@@ -278,6 +280,23 @@ void UPortalTraversalComponent::Traverse(APortal* From, APortal* To, const FVect
 		}
 	}
 
+	// Objects partway through portals decide in their own tick which pawns they collide with, and
+	// that may already have run this frame. Coming out of a portal can put the pawn inside the
+	// invisible part of one (an object or its copy), which must ignore it before it moves again.
+	if (UPortalSubsystem* Subsystem = GetWorld()->GetSubsystem<UPortalSubsystem>())
+	{
+		TArray<AActor*> Clipped;
+		Subsystem->GetClippedActors(Clipped);
+		for (AActor* Actor : Clipped)
+		{
+			UPortalTraversalComponent* Other = Actor->FindComponentByClass<UPortalTraversalComponent>();
+			if (Other && Other != this)
+			{
+				Other->UpdateCrossingCopy();
+			}
+		}
+	}
+
 	++TraversalCount;
 	UE_LOG(LogPortalWorlds, Log, TEXT("Traversed %s -> %s (scale x%.3f%s), eye now %s"),
 		*From->GetActorNameOrLabel(), *To->GetActorNameOrLabel(), ScaleFactor,
@@ -379,8 +398,15 @@ AActor* UPortalTraversalComponent::GetOrCreateCrossingCopy()
 		{
 			Mesh->SetMaterial(Index, Source->GetMaterial(Index));
 		}
-		Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		// Solid to pawns only (query collision, for character movement sweeps): nothing else should
+		// treat it as a second object. Its pawn response is set while it's shown (SetCopyPawnResponse),
+		// and its hits are passed on to the real object (OnCopyHit).
+		Mesh->SetCollisionEnabled(Source->IsCollisionEnabled() ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
+		Mesh->SetCollisionObjectType(ECC_WorldDynamic);
+		Mesh->SetCollisionResponseToAllChannels(ECR_Ignore);
 		Mesh->SetGenerateOverlapEvents(false);
+		Mesh->SetCanEverAffectNavigation(false);
+		Mesh->OnComponentHit.AddDynamic(this, &UPortalTraversalComponent::OnCopyHit);
 		Mesh->SetCastShadow(Source->CastShadow);
 		Mesh->SetupAttachment(Root);
 		Mesh->SetRelativeTransform(FTransform(Source->GetComponentTransform().ToMatrixWithScale() * ToOwnerLocal));
@@ -388,6 +414,8 @@ AActor* UPortalTraversalComponent::GetOrCreateCrossingCopy()
 		CrossingCopy->AddInstanceComponent(Mesh);
 	}
 	CrossingCopy->SetActorHiddenInGame(true);
+	CrossingCopy->SetActorEnableCollision(false);
+	CopyPawnResponse = ECR_Ignore;
 	bCrossingCopyMirrored = Owner->GetActorTransform().ToMatrixWithScale().Determinant() < 0.0;
 	return CrossingCopy;
 }
@@ -532,12 +560,14 @@ void UPortalTraversalComponent::UpdateCrossingCopy()
 	{
 		Subsystem->SetActorClippedAtPortal(Owner, Link && bClip ? Through : nullptr, KeepNormal);
 	}
+	UpdatePawnCollision(Link && bClip ? Through : nullptr, KeepNormal);
 
 	if (!Link || !bShowCopyWhileCrossing)
 	{
 		if (CrossingCopy && !CrossingCopy->IsHidden())
 		{
 			CrossingCopy->SetActorHiddenInGame(true);
+			CrossingCopy->SetActorEnableCollision(false);
 			if (Subsystem)
 			{
 				Subsystem->SetActorClippedAtPortal(CrossingCopy, nullptr, FVector::ZeroVector);
@@ -552,9 +582,11 @@ void UPortalTraversalComponent::UpdateCrossingCopy()
 		return;
 	}
 	const FMatrix Warp = Through->GetWarpTo(Link);
+	CopyWarp = Warp;
 	const FMatrix CopyMatrix = Owner->GetActorTransform().ToMatrixWithScale() * Warp;
 	Copy->SetActorTransform(FTransform(CopyMatrix));
 	Copy->SetActorHiddenInGame(false);
+	Copy->SetActorEnableCollision(true);
 	const bool bCopyMirrored = CopyMatrix.Determinant() < 0.0;
 	if (bCopyMirrored != bCrossingCopyMirrored)
 	{
@@ -575,10 +607,172 @@ void UPortalTraversalComponent::UpdateCrossingCopy()
 	SetClipPlane(Copy, CopyPlane, CopyClipPlane);
 	Subsystem->SetActorClippedAtPortal(Copy, bClip ? Link : nullptr, CopyKeepNormal);
 
+	// The copy blocks pawns like the object does (not while it's held, say), except pawns on the
+	// copy's own cut-away side, which would bump into its invisible part.
+	const bool bPawnOnCopyCutSide = bClip && IsPawnOnCutSide(Copy, Link, CopyKeepNormal);
+	SetCopyPawnResponse(bPawnOnCopyCutSide ? ECR_Ignore : GetOwnPawnResponse());
+
 	// The copy belongs to the exit portal's space, so views of that space show it.
 	const int32 LinkSpace = UPortalSubsystem::GetActorSpace(Link);
 	if (UPortalSubsystem::GetActorSpace(Copy) != LinkSpace)
 	{
 		Subsystem->SetActorSpace(Copy, LinkSpace);
+	}
+}
+
+void UPortalTraversalComponent::StopIgnoringPawns()
+{
+	if (!bIgnoringPawns)
+	{
+		return;
+	}
+	bIgnoringPawns = false;
+	if (UPrimitiveComponent* Body = Cast<UPrimitiveComponent>(GetOwner()->GetRootComponent()))
+	{
+		Body->SetCollisionResponseToChannel(ECC_Pawn, PawnResponseBeforeIgnore);
+	}
+}
+
+bool UPortalTraversalComponent::IsAnyPawnOverlapping() const
+{
+	const UPrimitiveComponent* Body = Cast<UPrimitiveComponent>(GetOwner()->GetRootComponent());
+	if (!Body)
+	{
+		return false;
+	}
+	for (TActorIterator<APawn> It(GetWorld()); It; ++It)
+	{
+		const UPrimitiveComponent* PawnBody = Cast<UPrimitiveComponent>(It->GetRootComponent());
+		if (PawnBody && PawnBody->IsCollisionEnabled()
+			&& Body->OverlapComponent(PawnBody->GetComponentLocation(), PawnBody->GetComponentQuat(), PawnBody->GetCollisionShape()))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+bool UPortalTraversalComponent::IsPawnOnCutSide(const AActor* Actor, const APortal* Portal, const FVector& KeepNormal) const
+{
+	if (!Actor || !Portal)
+	{
+		return false;
+	}
+	FVector Origin, Extent;
+	Actor->GetActorBounds(/*bOnlyCollidingComponents*/ true, Origin, Extent);
+	const FVector PortalLocation = Portal->GetActorLocation();
+	for (TActorIterator<APawn> It(GetWorld()); It; ++It)
+	{
+		const APawn* Pawn = *It;
+		const FVector PawnLocation = Pawn->GetActorLocation();
+		if (FVector::DotProduct(PawnLocation - PortalLocation, KeepNormal) >= 0.0)
+		{
+			continue; // on the actor's own side: it's visible there, so it should block
+		}
+		float Radius, HalfHeight;
+		Pawn->GetSimpleCollisionCylinder(Radius, HalfHeight);
+		const double Reach = Extent.Size() * 2.0 + FVector2D(Radius, HalfHeight).Size();
+		if (Portal->DistanceTo(PawnLocation) < Reach)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+ECollisionResponse UPortalTraversalComponent::GetOwnPawnResponse() const
+{
+	const UPrimitiveComponent* Body = Cast<UPrimitiveComponent>(GetOwner()->GetRootComponent());
+	if (!Body || !Body->IsCollisionEnabled())
+	{
+		return ECR_Ignore;
+	}
+	return bIgnoringPawns ? PawnResponseBeforeIgnore.GetValue() : Body->GetCollisionResponseToChannel(ECC_Pawn);
+}
+
+void UPortalTraversalComponent::SetCopyPawnResponse(ECollisionResponse Response)
+{
+	if (!CrossingCopy || CopyPawnResponse == Response)
+	{
+		return;
+	}
+	CopyPawnResponse = Response;
+	TArray<UPrimitiveComponent*> Primitives;
+	CrossingCopy->GetComponents(Primitives);
+	for (UPrimitiveComponent* Primitive : Primitives)
+	{
+		Primitive->SetCollisionResponseToChannel(ECC_Pawn, Response);
+	}
+}
+
+void UPortalTraversalComponent::OnCopyHit(UPrimitiveComponent* HitComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit)
+{
+	// A character walking into the copy pushes the real object, the way UCharacterMovementComponent
+	// pushes a simulating body it bumps into (ApplyImpactPhysicsForces), carried back through the portal.
+	const APawn* Pawn = Cast<APawn>(OtherActor);
+	UPrimitiveComponent* Body = Cast<UPrimitiveComponent>(GetOwner()->GetRootComponent());
+	if (!Pawn || !Body || !Body->IsSimulatingPhysics() || !CrossingCopy || CrossingCopy->IsHidden())
+	{
+		return;
+	}
+	if (Hit.bStartPenetrating)
+	{
+		return; // the pawn started inside the copy (it arrived there, or the copy moved into it): not a push
+	}
+	const UCharacterMovementComponent* Movement = Pawn->FindComponentByClass<UCharacterMovementComponent>();
+	if (!Movement || !Movement->bEnablePhysicsInteraction)
+	{
+		return;
+	}
+
+	// The hit can arrive from either side's point of view, so orient the normal towards the pawn.
+	FVector Normal = Hit.ImpactNormal;
+	if (FVector::DotProduct(Normal, Pawn->GetActorLocation() - Hit.ImpactPoint) < 0.0)
+	{
+		Normal = -Normal;
+	}
+	const FMatrix CopyToObject = CopyWarp.Inverse();
+	const FVector Direction = CopyToObject.TransformVector(-Normal).GetSafeNormal();
+	const FVector Point = CopyToObject.TransformPosition(Hit.ImpactPoint);
+
+	const double Mass = Movement->bPushForceScaledToMass ? FMath::Max(Body->GetMass(), 1.0f) : 1.0;
+	if (Body->GetPhysicsLinearVelocity().IsNearlyZero(1.0))
+	{
+		Body->AddImpulseAtLocation(Direction * (Mass * Movement->InitialPushForceFactor), Point);
+	}
+	else
+	{
+		Body->AddForceAtLocation(Direction * (Mass * Movement->PushForceFactor), Point);
+	}
+}
+
+void UPortalTraversalComponent::UpdatePawnCollision(const APortal* Through, const FVector& KeepNormal)
+{
+	// The part of the object past the portal is cut away (it's drawn at the linked portal instead),
+	// but its collision is still there. A pawn walking up to that side of the portal would bump into
+	// it, and push the object, before reaching the portal. So while any pawn is on the cut-away side
+	// near the portal, the object ignores pawns. (The pawn channel response covers both the
+	// character's movement sweeps and the physics contact with its capsule.)
+	UPrimitiveComponent* Body = Cast<UPrimitiveComponent>(GetOwner()->GetRootComponent());
+	if (!Body)
+	{
+		return;
+	}
+
+	const bool bPawnOnCutSide = IsPawnOnCutSide(GetOwner(), Through, KeepNormal);
+	if (bPawnOnCutSide && !bIgnoringPawns)
+	{
+		const ECollisionResponse Current = Body->GetCollisionResponseToChannel(ECC_Pawn);
+		if (Current != ECR_Ignore) // already ignoring (e.g. held by UPortalGrabComponent): leave it alone
+		{
+			PawnResponseBeforeIgnore = Current;
+			Body->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+			bIgnoringPawns = true;
+		}
+	}
+	else if (!bPawnOnCutSide && bIgnoringPawns && !IsAnyPawnOverlapping())
+	{
+		// Wait until no pawn is inside the object, or turning collision back on would shove it away.
+		StopIgnoringPawns();
 	}
 }

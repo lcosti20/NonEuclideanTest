@@ -121,6 +121,18 @@ public:
 	 */
 	void SetActorClippedAtPortal(AActor* Actor, const APortal* Portal, const FVector& KeepNormal);
 
+	/** Actors currently cut at a portal (see SetActorClippedAtPortal). */
+	void GetClippedActors(TArray<AActor*>& OutActors) const
+	{
+		for (const TPair<TWeakObjectPtr<AActor>, FClippedActor>& Pair : ClippedActors)
+		{
+			if (AActor* Actor = Pair.Key.Get())
+			{
+				OutActors.Add(Actor);
+			}
+		}
+	}
+
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 	virtual void Deinitialize() override;
 
