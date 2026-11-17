@@ -620,6 +620,16 @@ void UPortalTraversalComponent::UpdateCrossingCopy()
 	}
 }
 
+AActor* UPortalTraversalComponent::GetVisibleCrossingCopy(FMatrix& OutWarp) const
+{
+	if (!CrossingCopy || CrossingCopy->IsHidden())
+	{
+		return nullptr;
+	}
+	OutWarp = CopyWarp;
+	return CrossingCopy;
+}
+
 void UPortalTraversalComponent::StopIgnoringPawns()
 {
 	if (!bIgnoringPawns)

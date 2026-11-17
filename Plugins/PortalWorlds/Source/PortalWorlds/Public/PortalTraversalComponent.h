@@ -128,6 +128,12 @@ public:
 	 */
 	void StopIgnoringPawns();
 
+	/**
+	 * Objects: the copy shown at the linked portal while the owner is partway through one, or null
+	 * when none is shown. OutWarp maps the owner onto the copy.
+	 */
+	AActor* GetVisibleCrossingCopy(FMatrix& OutWarp) const;
+
 	/** Number of portals passed through since play began. */
 	UFUNCTION(BlueprintPure, Category = "Portal")
 	int32 GetTraversalCount() const { return TraversalCount; }

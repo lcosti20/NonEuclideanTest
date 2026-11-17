@@ -158,6 +158,53 @@ UPrimitiveComponent* UPortalGrabComponent::TraceForObject(FMatrix& OutWarp) cons
 			HopParams.AddIgnoredActor(Hit.GetActor());
 			bHit = GetWorld()->LineTraceSingleByChannel(Hit, From, End, ECC_Visibility, HopParams);
 		}
+
+		// The copy of an object partway through a portal (shown at the linked portal) is the rest of
+		// that object: aiming at its visible part grabs the object, through the copy's warp. The copy
+		// doesn't block the visibility channel, so its meshes are traced one by one.
+		if (Subsystem)
+		{
+			double Nearest = bHit ? Hit.Distance : FVector::Dist(From, End);
+			UPrimitiveComponent* CopiedBody = nullptr;
+			FMatrix CopiedWarp = FMatrix::Identity;
+			TArray<AActor*> Clipped;
+			Subsystem->GetClippedActors(Clipped);
+			for (AActor* Actor : Clipped)
+			{
+				const UPortalTraversalComponent* Traversal = Actor->FindComponentByClass<UPortalTraversalComponent>();
+				UPrimitiveComponent* Body = Cast<UPrimitiveComponent>(Actor->GetRootComponent());
+				FMatrix ToCopy = FMatrix::Identity;
+				AActor* Copy = Traversal && Body ? Traversal->GetVisibleCrossingCopy(ToCopy) : nullptr;
+				if (!Copy)
+				{
+					continue;
+				}
+				TArray<UPrimitiveComponent*> CopyPrimitives;
+				Copy->GetComponents(CopyPrimitives);
+				for (UPrimitiveComponent* Primitive : CopyPrimitives)
+				{
+					FHitResult CopyHit;
+					if (Primitive->LineTraceComponent(CopyHit, From, End, HopParams) && CopyHit.Distance < Nearest
+						&& !Subsystem->IsInCutAwayPart(Copy, CopyHit.ImpactPoint + HopDirection * 0.5))
+					{
+						Nearest = CopyHit.Distance;
+						CopiedBody = Body;
+						CopiedWarp = ToCopy;
+					}
+				}
+			}
+			if (CopiedBody)
+			{
+				if (!CopiedBody->IsSimulatingPhysics())
+				{
+					return nullptr;
+				}
+				OutWarp = OutWarp * CopiedWarp.Inverse(); // the player's side -> the copy -> the object
+				const double RelativeRadius = CopiedBody->Bounds.SphereRadius / MatrixScale(OutWarp);
+				return RelativeRadius <= MaxObjectRadius * GetPlayerScale() ? CopiedBody : nullptr;
+			}
+		}
+
 		if (bHit)
 		{
 			UPrimitiveComponent* Component = Hit.GetComponent();
