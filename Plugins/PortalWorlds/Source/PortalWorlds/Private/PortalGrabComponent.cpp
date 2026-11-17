@@ -140,7 +140,25 @@ UPrimitiveComponent* UPortalGrabComponent::TraceForObject(FMatrix& OutWarp) cons
 
 		const FVector End = From + (To - From) * Fraction;
 		FHitResult Hit;
-		if (GetWorld()->LineTraceSingleByChannel(Hit, From, End, ECC_Visibility, Params))
+		FCollisionQueryParams HopParams = Params;
+		bool bHit = GetWorld()->LineTraceSingleByChannel(Hit, From, End, ECC_Visibility, HopParams);
+		// The part of an object past the portal it's partway through is cut away (it's drawn at the
+		// linked portal instead), and no view, direct or through a portal, ever shows it. So the
+		// trace looks straight through it, as if it weren't there.
+		const FVector HopDirection = (End - From).GetSafeNormal();
+		const auto IsHiddenFromTrace = [Subsystem, HopDirection](const FHitResult& H)
+		{
+			// Tested a little way into the object along the trace: a hop through a portal starts on the
+			// exit portal's plane, so it can start inside an object cut there, and that hit lies on the
+			// plane itself. The side the trace heads into is the side it sees.
+			return Subsystem && Subsystem->IsInCutAwayPart(H.GetActor(), H.ImpactPoint + HopDirection * 0.5);
+		};
+		for (int32 Skipped = 0; bHit && Skipped < 4 && IsHiddenFromTrace(Hit); ++Skipped)
+		{
+			HopParams.AddIgnoredActor(Hit.GetActor());
+			bHit = GetWorld()->LineTraceSingleByChannel(Hit, From, End, ECC_Visibility, HopParams);
+		}
+		if (bHit)
 		{
 			UPrimitiveComponent* Component = Hit.GetComponent();
 			if (!Component || !Component->IsSimulatingPhysics())

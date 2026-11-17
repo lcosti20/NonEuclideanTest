@@ -650,6 +650,13 @@ void UPortalSubsystem::SetActorClippedAtPortal(AActor* Actor, const APortal* Por
 	}
 }
 
+bool UPortalSubsystem::IsInCutAwayPart(const AActor* Actor, const FVector& Point) const
+{
+	const FClippedActor* Clip = ClippedActors.Find(Actor);
+	const APortal* Portal = Clip ? Clip->Portal.Get() : nullptr;
+	return Portal && FVector::DotProduct(Point - Portal->GetActorLocation(), Clip->KeepNormal) < 0.0;
+}
+
 void UPortalSubsystem::EnsureCaptureResources(int32 NodeIndex)
 {
 	UWorld* World = GetWorld();
