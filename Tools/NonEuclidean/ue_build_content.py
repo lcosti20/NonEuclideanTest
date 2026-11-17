@@ -6,7 +6,8 @@ Run in the full editor after ue_phase0_import.py (spawning actors doesn't work i
 
 Stages: materials, meshes, maps (default: all three); "mirror" builds only L_NE_Mirror; "puzzle"
 builds only L_NE_ObjectPuzzles with its materials and meshes (run make_puzzle_meshes.py first);
-"clip" only adds the portal clip (MF_PortalClip) to the existing M_PW_Color, without touching the map. Portals come from the PortalWorlds plugin
+"clip" only adds the portal clip (MF_PortalClip) to the existing M_PW_Color and gives SM_PW_Key's body the
+clipped MI_PW_KeyBody, without touching the map. Portals come from the PortalWorlds plugin
 (/Script/PortalWorlds.Portal, /PortalWorlds/... assets).
 
 Coordinate conversion from the original engine (metres, Y-up, right-handed), confirmed
@@ -589,6 +590,26 @@ def add_portal_clip(mat):
     log(f"portal clip added to {mat.get_path_name()}")
 
 
+# T_Gold is one pixel of this colour; M_PW_Color shades a colour the same way M_NE_Textured shades a
+# texture, so the key's body looks the same as MI_NE_Gold but is cut at a portal too.
+GOLD_RGB = (255 / 255, 228 / 255, 138 / 255)
+
+
+def key_body_material(color):
+    return puzzle_instance("MI_PW_KeyBody", color, GOLD_RGB)
+
+
+def set_slot_material(mesh, slot_key, material):
+    """Sets the material of the mesh's slot whose name contains slot_key."""
+    for i, slot in enumerate(mesh.get_editor_property("static_materials")):
+        if slot_key.lower() in str(slot.get_editor_property("material_slot_name")).lower():
+            mesh.set_material(i, material)
+            eal.save_loaded_asset(mesh)
+            log(f"{mesh.get_name()} slot {i} ({slot_key}) -> {material.get_name()}")
+            return
+    raise RuntimeError(f"{mesh.get_name()}: no material slot like {slot_key}")
+
+
 def puzzle_instance(name, parent, rgb):
     path = f"{PUZZLE_MAT_DIR}/{name}"
     fresh(path)
@@ -605,6 +626,7 @@ def build_puzzle_materials():
     add_portal_clip(color)  # crates and keys are cut at a portal while partway through
     ghost = puzzle_material("M_PW_Ghost", translucent=True)
     puzzle_instance("MI_PW_KeyHead", color, (0.9, 0.18, 0.12))
+    key_body_material(color)
     puzzle_instance("MI_PW_Crate", color, (0.95, 0.55, 0.15))
     puzzle_instance("MI_PW_Gate", color, (0.55, 0.35, 0.8))
     puzzle_instance("MI_PW_Ghost", ghost, (0.35, 0.9, 1.0))
@@ -675,7 +697,7 @@ def build_puzzle_meshes():
     n = len(KEY_CELLS)
     centroid = [sum(c[i] for c in KEY_CELLS) / n for i in range(3)]
     key_boxes = [([(c[i] - centroid[i]) * KEY_CELL for i in range(3)], KEY_CELL) for c in KEY_CELLS]
-    configure_puzzle_mesh(key, {"Head": mat(f"{PUZZLE_MAT_DIR}/MI_PW_KeyHead"), "Body": mat(f"{MAT_DIR}/MI_NE_Gold")}, key_boxes)
+    configure_puzzle_mesh(key, {"Head": mat(f"{PUZZLE_MAT_DIR}/MI_PW_KeyHead"), "Body": mat(f"{PUZZLE_MAT_DIR}/MI_PW_KeyBody")}, key_boxes)
 
     crate = import_puzzle_mesh("SM_PW_Crate")
     configure_puzzle_mesh(crate, {"Crate": mat(f"{PUZZLE_MAT_DIR}/MI_PW_Crate")}, [((0, 0, 0), CRATE_SIZE)])
@@ -836,7 +858,9 @@ def main():
     if "maps" in stages or "puzzle" in stages:
         build_puzzle()
     if "clip" in stages:
-        add_portal_clip(eal.load_asset(f"{PUZZLE_MAT_DIR}/M_PW_Color"))
+        color = eal.load_asset(f"{PUZZLE_MAT_DIR}/M_PW_Color")
+        add_portal_clip(color)
+        set_slot_material(eal.load_asset(f"{PUZZLE_MESH_DIR}/SM_PW_Key"), "Body", key_body_material(color))
 
 
 main()
