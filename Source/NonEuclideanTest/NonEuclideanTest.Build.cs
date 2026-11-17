@@ -24,7 +24,9 @@ public class NonEuclideanTest : ModuleRules
 			"Slate"
 		});
 
-		PrivateDependencyModuleNames.AddRange(new string[] { });
+		PrivateDependencyModuleNames.AddRange(new string[] {
+			"AssetRegistry"
+		});
 
 		PublicIncludePaths.AddRange(new string[] {
 			"NonEuclideanTest",

@@ -6,7 +6,12 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "InputAction.h"
 #include "InputActionValue.h"
+#include "Blueprint/UserWidget.h"
+#include "GameFramework/PlayerController.h"
+#include "Kismet/GameplayStatics.h"
 #include "NEGameMode.h"
+#include "NEMenuWidget.h"
+#include "NEStartMenuGameMode.h"
 #include "NEVideoLook.h"
 #include "PortalGrabComponent.h"
 #include "PortalTraversalComponent.h"
@@ -85,24 +90,111 @@ void ANEPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputC
 	}
 
 	// Keys 1-8 switch demos, like the original's level keys (7, the mirror tunnel, and 8, the object puzzles, are new).
+	// The game keys do nothing while the exit prompt is open.
 	static const FKey DemoKeys[] = {EKeys::One, EKeys::Two, EKeys::Three, EKeys::Four, EKeys::Five, EKeys::Six, EKeys::Seven, EKeys::Eight};
 	for (int32 Index = 0; Index < UE_ARRAY_COUNT(DemoKeys); ++Index)
 	{
 		FInputKeyBinding Binding(FInputChord(DemoKeys[Index]), IE_Pressed);
 		Binding.KeyDelegate.GetDelegateForManualSet().BindWeakLambda(this, [this, Index]()
 		{
-			ANEGameMode::OpenDemo(this, Index);
+			if (!bExitPrompt)
+			{
+				ANEGameMode::OpenDemo(this, Index);
+			}
 		});
 		PlayerInputComponent->KeyBindings.Add(Binding);
 	}
 
 	// Objects: E picks up / drops, left click throws.
 	FInputKeyBinding GrabBinding(FInputChord(EKeys::E), IE_Pressed);
-	GrabBinding.KeyDelegate.GetDelegateForManualSet().BindWeakLambda(this, [this]() { PortalGrab->ToggleGrab(); });
+	GrabBinding.KeyDelegate.GetDelegateForManualSet().BindWeakLambda(this, [this]()
+	{
+		if (!bExitPrompt)
+		{
+			PortalGrab->ToggleGrab();
+		}
+	});
 	PlayerInputComponent->KeyBindings.Add(GrabBinding);
 	FInputKeyBinding ThrowBinding(FInputChord(EKeys::LeftMouseButton), IE_Pressed);
-	ThrowBinding.KeyDelegate.GetDelegateForManualSet().BindWeakLambda(this, [this]() { PortalGrab->Throw(); });
+	ThrowBinding.KeyDelegate.GetDelegateForManualSet().BindWeakLambda(this, [this]()
+	{
+		if (!bExitPrompt)
+		{
+			PortalGrab->Throw();
+		}
+	});
 	PlayerInputComponent->KeyBindings.Add(ThrowBinding);
+
+	// Esc, Y and N still work while the game is paused, so they're bound to run then.
+	PlayerInputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &ANEPlayerCharacter::ToggleExitPrompt).bExecuteWhenPaused = true;
+	PlayerInputComponent->BindKey(EKeys::Y, IE_Pressed, this, &ANEPlayerCharacter::ConfirmExit).bExecuteWhenPaused = true;
+	PlayerInputComponent->BindKey(EKeys::N, IE_Pressed, this, &ANEPlayerCharacter::CancelExit).bExecuteWhenPaused = true;
+}
+
+void ANEPlayerCharacter::ToggleExitPrompt()
+{
+	if (bExitPrompt)
+	{
+		CloseExitPrompt();
+	}
+	else
+	{
+		ShowExitPrompt();
+	}
+}
+
+void ANEPlayerCharacter::ConfirmExit()
+{
+	if (bExitPrompt)
+	{
+		UGameplayStatics::OpenLevel(this, FName(ANEStartMenuGameMode::MapPath()));
+	}
+}
+
+void ANEPlayerCharacter::CancelExit()
+{
+	if (bExitPrompt)
+	{
+		CloseExitPrompt();
+	}
+}
+
+void ANEPlayerCharacter::ShowExitPrompt()
+{
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC)
+	{
+		return;
+	}
+
+	bExitPrompt = true;
+	// The controller keeps ticking while paused, so stop look and move input from turning the view.
+	PC->SetIgnoreMoveInput(true);
+	PC->SetIgnoreLookInput(true);
+	UGameplayStatics::SetGamePaused(this, true);
+
+	if (!ExitPromptWidget)
+	{
+		ExitPromptWidget = CreateWidget<UNEMenuWidget>(PC);
+	}
+	ExitPromptWidget->SetContent(TEXT("Paused"), {TEXT("Exit to the start menu?")},
+		TEXT("Y: yes, go to the start menu    N or Esc: keep playing"));
+	ExitPromptWidget->AddToViewport(100);
+}
+
+void ANEPlayerCharacter::CloseExitPrompt()
+{
+	bExitPrompt = false;
+	if (ExitPromptWidget)
+	{
+		ExitPromptWidget->RemoveFromParent();
+	}
+	if (APlayerController* PC = Cast<APlayerController>(GetController()))
+	{
+		PC->SetIgnoreMoveInput(false);
+		PC->SetIgnoreLookInput(false);
+	}
+	UGameplayStatics::SetGamePaused(this, false);
 }
 
 void ANEPlayerCharacter::MoveInput(const FInputActionValue& Value)

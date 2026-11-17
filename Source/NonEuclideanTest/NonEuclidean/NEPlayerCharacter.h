@@ -6,6 +6,7 @@
 
 class UCameraComponent;
 class UInputAction;
+class UNEMenuWidget;
 class UPortalGrabComponent;
 class UPortalTraversalComponent;
 struct FInputActionValue;
@@ -17,7 +18,8 @@ struct FInputActionValue;
  * no jumping.
  *
  * Not in the original: E picks up / drops physics objects and the left mouse button throws them
- * (UPortalGrabComponent), for the object puzzle map.
+ * (UPortalGrabComponent), for the object puzzle map. Esc pauses and asks whether to leave for the
+ * start menu (Y: yes, N or Esc: keep playing).
  */
 UCLASS()
 class NONEUCLIDEANTEST_API ANEPlayerCharacter : public ACharacter
@@ -38,6 +40,15 @@ protected:
 
 	void MoveInput(const FInputActionValue& Value);
 	void LookInput(const FInputActionValue& Value);
+
+	/** Esc: opens the exit prompt, or closes it again. */
+	void ToggleExitPrompt();
+	/** Y in the exit prompt: go to the start menu. */
+	void ConfirmExit();
+	/** N in the exit prompt: keep playing. */
+	void CancelExit();
+	void ShowExitPrompt();
+	void CloseExitPrompt();
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UCameraComponent> Camera;
@@ -75,4 +86,10 @@ private:
 	// Head-bob state, same model as Player::Update/CamOffset in the original.
 	float BobMagnitude = 0.0f; // smoothed horizontal speed in m/s (scale-independent)
 	float BobPhase = 0.0f;
+
+	// Exit prompt: the game is paused while it's open.
+	bool bExitPrompt = false;
+
+	UPROPERTY()
+	TObjectPtr<UNEMenuWidget> ExitPromptWidget;
 };
