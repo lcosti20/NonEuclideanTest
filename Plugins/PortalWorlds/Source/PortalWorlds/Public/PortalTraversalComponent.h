@@ -149,6 +149,7 @@ private:
 	void TraverseObject(APortal* From, APortal* To, const FMatrix& Warp, const FVector& Bump);
 	void UpdateCrossingCopy();
 	static void SetClipPlane(AActor* Actor, const FVector4f& Plane, FVector4f& InOutCurrent);
+	void WarnIfMaterialsIgnoreClip() const;
 	AActor* GetOrCreateCrossingCopy();
 	void MirrorPendingInput();
 	void UpdateInputTickPrerequisites();
@@ -167,6 +168,9 @@ private:
 	/** Clip planes last written to the owner's and the copy's primitives (zero: no clipping). */
 	FVector4f OwnerClipPlane = FVector4f(0.0f, 0.0f, 0.0f, 0.0f);
 	FVector4f CopyClipPlane = FVector4f(0.0f, 0.0f, 0.0f, 0.0f);
+
+	/** Whether the owner's materials were checked for MF_PortalClip (done once, on the first cut). */
+	bool bCheckedClipMaterials = false;
 
 	FVector PreviousEye = FVector::ZeroVector;
 	bool bHasPreviousEye = false;

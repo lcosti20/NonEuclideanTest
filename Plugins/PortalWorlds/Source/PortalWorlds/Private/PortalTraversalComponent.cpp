@@ -6,6 +6,8 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
 #include "HAL/IConsoleManager.h"
+#include "Materials/MaterialFunctionInterface.h"
+#include "Materials/MaterialInterface.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/Pawn.h"
@@ -391,6 +393,33 @@ AActor* UPortalTraversalComponent::GetOrCreateCrossingCopy()
 
 namespace
 {
+	/** Whether a material can be cut at the portal: masked, and calling MF_PortalClip (which reads PortalClipPlane). */
+	bool MaterialSupportsPortalClip(const UMaterialInterface* Material)
+	{
+		if (!Material || Material->GetBlendMode() != BLEND_Masked)
+		{
+			return false;
+		}
+		TArray<FMaterialParameterInfo> Infos;
+		TArray<FGuid> Ids;
+		Material->GetAllVectorParameterInfo(Infos, Ids);
+		if (Infos.ContainsByPredicate([](const FMaterialParameterInfo& Info) { return Info.Name == TEXT("PortalClipPlane"); }))
+		{
+			return true;
+		}
+#if WITH_EDITORONLY_DATA
+		bool bUsesClip = false;
+		Material->IterateDependentFunctions([&bUsesClip](UMaterialFunctionInterface* Function)
+		{
+			bUsesClip = Function && Function->GetFName() == TEXT("MF_PortalClip");
+			return !bUsesClip; // keep going until found
+		});
+		return bUsesClip;
+#else
+		return false;
+#endif
+	}
+
 	/** A plane keeping the points P with dot(P, Normal) >= W, packed as (Normal, W) for MF_PortalClip. */
 	FVector4f MakeClipPlane(const FVector& KeepNormal, const FVector& PointOnPlane)
 	{
@@ -410,6 +439,32 @@ void UPortalTraversalComponent::SetClipPlane(AActor* Actor, const FVector4f& Pla
 	for (UPrimitiveComponent* Primitive : Primitives)
 	{
 		Primitive->SetCustomPrimitiveDataVector4f(ClipPlaneDataIndex, Plane);
+	}
+}
+
+void UPortalTraversalComponent::WarnIfMaterialsIgnoreClip() const
+{
+	const AActor* Owner = GetOwner();
+	TArray<UPrimitiveComponent*> Primitives;
+	Owner->GetComponents(Primitives);
+	TArray<FString> Unsupported;
+	for (const UPrimitiveComponent* Primitive : Primitives)
+	{
+		for (int32 Index = 0; Index < Primitive->GetNumMaterials(); ++Index)
+		{
+			const UMaterialInterface* Material = Primitive->GetMaterial(Index);
+			if (!MaterialSupportsPortalClip(Material))
+			{
+				Unsupported.AddUnique(Material ? Material->GetPathName() : FString(TEXT("(none)")));
+			}
+		}
+	}
+	if (Unsupported.Num() > 0)
+	{
+		UE_LOG(LogPortalWorlds, Warning, TEXT("%s has Clip At Portal on, but these materials don't call MF_PortalClip, so it ")
+			TEXT("won't be cut at the portal and will poke out of the far side: %s. Use a Masked material whose Opacity Mask comes ")
+			TEXT("from /PortalWorlds/Materials/MF_PortalClip, or turn Clip At Portal off."),
+			*Owner->GetActorNameOrLabel(), *FString::Join(Unsupported, TEXT(", ")));
 	}
 }
 
@@ -452,6 +507,11 @@ void UPortalTraversalComponent::UpdateCrossingCopy()
 	if (Link)
 	{
 		KeepNormal = Through->GetNormal() * (Through->SignedDistance(Centre) >= 0.0 ? 1.0 : -1.0);
+	}
+	if (Link && bClip && !bCheckedClipMaterials)
+	{
+		bCheckedClipMaterials = true;
+		WarnIfMaterialsIgnoreClip();
 	}
 	SetClipPlane(Owner, Link && bClip ? MakeClipPlane(KeepNormal, Through->GetActorLocation()) : NoClip, OwnerClipPlane);
 	if (Subsystem)
